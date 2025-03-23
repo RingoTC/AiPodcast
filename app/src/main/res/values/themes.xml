@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. -->
+    <style name="Theme.A6" parent="Theme.AppCompat.Light.DarkActionBar">
+        <!-- Customize theme -->
+        <!-- Primary color -->
+        <item name="colorPrimary">@color/purple_500</item>
+        <!-- Darker variant of the primary color (used for status bar, etc.) -->
+        <item name="colorPrimaryDark">@color/purple_700</item>
+        <!-- Text and icons color on top of the primary color -->
+        <item name="android:textColorPrimary">@color/white</item>
+        <!-- Secondary color -->
+        <item name="colorAccent">@color/teal_200</item>
+        <!-- Status bar color -->
+        <item name="android:statusBarColor">?attr/colorPrimaryDark</item>
+    </style>
+</resources>
