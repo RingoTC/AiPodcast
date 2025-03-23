@@ -1,49 +1,64 @@
 package com.example.aipodcast;
 
-
 import android.os.Bundle;
-import androidx.appcompat.app.AppCompatActivity;
+import android.util.Log;
+import android.widget.Toast;
 
-import java.util.Arrays;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+
+import com.example.aipodcast.models.Article;
+import com.example.aipodcast.models.NewsResponse;
+import com.example.aipodcast.network.NewsApiClient;
+
 import java.util.List;
 
+import retrofit2.Call;
+import retrofit2.Callback;
+import retrofit2.Response;
+
 public class NewsListActivity extends AppCompatActivity {
+
+    private RecyclerView recyclerView;
+    private NewsAdapter adapter;
+    private String topic;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-//        setContentView(R.layout.activity_news_list);
-//
-//        // Get the selected topic from the intent
-//        String topic = getIntent().getStringExtra("TOPIC");
-//
-//        // Set up RecyclerView
-//        RecyclerView recyclerView = findViewById(R.id.recyclerViewNews);
-//        recyclerView.setLayoutManager(new LinearLayoutManager(this));
-//
-//        // Get news articles for the selected topic
-//        List<String> newsList = getNewsForTopic(topic);
-//
-//        // Set up adapter
-//        NewsAdapter adapter = new NewsAdapter(newsList);
-//        recyclerView.setAdapter(adapter);
+        setContentView(R.layout.activity_news_list);
+
+        recyclerView = findViewById(R.id.recyclerView);
+        recyclerView.setLayoutManager(new LinearLayoutManager(this));
+
+        topic = getIntent().getStringExtra("topic");
+        fetchNews(topic);
     }
 
-    // Method to get news articles for a specific topic
-    private List<String> getNewsForTopic(String topic) {
-        switch (topic) {
-            case "Technology":
-                return Arrays.asList("Tech News 1", "Tech News 2", "Tech News 3");
-            case "Sports":
-                return Arrays.asList("Sports News 1", "Sports News 2", "Sports News 3");
-            case "Entertainment":
-                return Arrays.asList("Entertainment News 1", "Entertainment News 2", "Entertainment News 3");
-            case "Health":
-                return Arrays.asList("Health News 1", "Health News 2", "Health News 3");
-            case "Politics":
-                return Arrays.asList("Politics News 1", "Politics News 2", "Politics News 3");
-            default:
-                return Arrays.asList("No news available");
-        }
+    private void fetchNews(String category) {
+        String apiKey = "YOUR_API_KEY"; // 🔒 Replace this with your actual NewsAPI key
+        String country = "us"; // or "gb", "ca", etc.
+
+        NewsApiClient.getInstance().getTopHeadlines(category, country, apiKey)
+                .enqueue(new Callback<NewsResponse>() {
+                    @Override
+                    public void onResponse(Call<NewsResponse> call, Response<NewsResponse> response) {
+                        if (response.isSuccessful() && response.body() != null) {
+                            List<Article> articles = response.body().getArticles();
+                            adapter = new NewsAdapter(articles);
+                            recyclerView.setAdapter(adapter);
+                        } else {
+                            Toast.makeText(NewsListActivity.this, "No articles found.", Toast.LENGTH_SHORT).show();
+                        }
+                    }
+
+                    @Override
+                    public void onFailure(Call<NewsResponse> call, Throwable t) {
+                        Toast.makeText(NewsListActivity.this, "Failed to fetch news", Toast.LENGTH_SHORT).show();
+                        Log.e("NewsListActivity", "API Error", t);
+                    }
+                });
     }
+
 }
