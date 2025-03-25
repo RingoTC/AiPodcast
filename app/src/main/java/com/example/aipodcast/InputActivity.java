@@ -24,6 +24,7 @@ import com.example.aipodcast.model.NewsArticle;
 import com.example.aipodcast.model.NewsCategory;
 import com.example.aipodcast.repository.NewsRepository;
 import com.example.aipodcast.repository.NewsRepositoryProvider;
+import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.chip.Chip;
 import com.google.android.material.chip.ChipGroup;
 import com.google.android.material.snackbar.Snackbar;
@@ -44,6 +45,7 @@ public class InputActivity extends AppCompatActivity {
     private static final String TAG = "InputActivity";
 
     // UI components
+    private MaterialCardView logoContainer;
     private ImageView logoSmall;
     private TextView searchTitle;
     private EditText keywordInput;
@@ -52,6 +54,7 @@ public class InputActivity extends AppCompatActivity {
     private RecyclerView newsRecyclerView;
     private TextView emptyStateView;
     private Button submitButton;
+    private MaterialCardView searchCard;
 
     // Data
     private NewsAdapter newsAdapter;
@@ -62,6 +65,11 @@ public class InputActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        
+        // Hide action bar to keep consistent with MainActivity
+        if (getSupportActionBar() != null) {
+            getSupportActionBar().hide();
+        }
         
         // Enable shared element transition
         supportPostponeEnterTransition();
@@ -77,20 +85,18 @@ public class InputActivity extends AppCompatActivity {
         setupCategoryChips();
         setupListeners();
         
+        // Apply animations
+        animateUI();
+        
         // Complete transition
         supportStartPostponedEnterTransition();
-        
-        // Enable back navigation
-        if (getSupportActionBar() != null) {
-            getSupportActionBar().setDisplayHomeAsUpEnabled(true);
-            getSupportActionBar().setTitle("News Search");
-        }
     }
 
     /**
      * Initialize and bind all UI views from layout
      */
     private void initializeViews() {
+        logoContainer = findViewById(R.id.logo_container);
         logoSmall = findViewById(R.id.logo_small);
         searchTitle = findViewById(R.id.search_title);
         keywordInput = findViewById(R.id.input_keyword);
@@ -99,6 +105,32 @@ public class InputActivity extends AppCompatActivity {
         newsRecyclerView = findViewById(R.id.news_recycler_view);
         emptyStateView = findViewById(R.id.empty_state_view);
         submitButton = findViewById(R.id.btn_submit);
+        searchCard = findViewById(R.id.search_card);
+    }
+    
+    /**
+     * Apply entrance animations to UI elements
+     */
+    private void animateUI() {
+        // Prepare animations (except for shared elements)
+        searchCard.setTranslationY(50f);
+        searchCard.setAlpha(0f);
+        
+        emptyStateView.setAlpha(0f);
+        
+        // Only animate views that aren't part of the shared element transition
+        searchCard.animate()
+                .translationY(0f)
+                .alpha(1f)
+                .setStartDelay(300)
+                .setDuration(400)
+                .start();
+        
+        emptyStateView.animate()
+                .alpha(1f)
+                .setStartDelay(400)
+                .setDuration(300)
+                .start();
     }
 
     /**
@@ -126,6 +158,9 @@ public class InputActivity extends AppCompatActivity {
      * Setup click listeners for interactive elements
      */
     private void setupListeners() {
+        // Back navigation
+        logoContainer.setOnClickListener(v -> finishAfterTransition());
+        
         submitButton.setOnClickListener(v -> performSearch());
         
         // Add listener for category selection
@@ -249,6 +284,13 @@ public class InputActivity extends AppCompatActivity {
         emptyStateView.setVisibility(View.GONE);
         newsRecyclerView.setVisibility(View.VISIBLE);
         
+        // Add animation for results
+        newsRecyclerView.setAlpha(0f);
+        newsRecyclerView.animate()
+                .alpha(1f)
+                .setDuration(300)
+                .start();
+        
         currentArticles.clear();
         currentArticles.addAll(articles);
         newsAdapter.notifyDataSetChanged();
@@ -266,13 +308,23 @@ public class InputActivity extends AppCompatActivity {
         newsRecyclerView.setVisibility(View.GONE);
         emptyStateView.setVisibility(View.VISIBLE);
         emptyStateView.setText(message);
+        
+        // Fade in animation
+        emptyStateView.setAlpha(0f);
+        emptyStateView.animate()
+                .alpha(1f)
+                .setDuration(300)
+                .start();
     }
 
     /**
      * Show error message to user
      */
     private void showError(String message) {
-        Snackbar.make(keywordInput, message, Snackbar.LENGTH_LONG).show();
+        Snackbar.make(keywordInput, message, Snackbar.LENGTH_LONG)
+                .setBackgroundTint(getResources().getColor(R.color.purple_700, getTheme()))
+                .setTextColor(getResources().getColor(R.color.white, getTheme()))
+                .show();
     }
 
     /**
@@ -282,6 +334,17 @@ public class InputActivity extends AppCompatActivity {
         progressBar.setVisibility(isLoading ? View.VISIBLE : View.GONE);
         submitButton.setEnabled(!isLoading);
         keywordInput.setEnabled(!isLoading);
+        
+        // Add animation for progress bar
+        if (isLoading) {
+            progressBar.setScaleX(0f);
+            progressBar.setScaleY(0f);
+            progressBar.animate()
+                    .scaleX(1f)
+                    .scaleY(1f)
+                    .setDuration(300)
+                    .start();
+        }
         
         // Disable category selection during loading
         for (int i = 0; i < categoryChipGroup.getChildCount(); i++) {
