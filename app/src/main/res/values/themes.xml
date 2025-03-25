@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
-    <style name="Theme.A6" parent="Theme.AppCompat.Light.DarkActionBar">
+    <style name="Theme.A6" parent="Theme.MaterialComponents.Light.DarkActionBar">
         <!-- Customize theme -->
         <!-- Primary color -->
         <item name="colorPrimary">@color/purple_500</item>
