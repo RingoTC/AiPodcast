@@ -14,13 +14,12 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 
 /**
- * Wrapper for NewsService that adds caching capabilities
- * Maintains the same interface as NewsService while enhancing functionality
+ * Wrapper for NewsService that adds caching functionality
  */
 public class NewsServiceWrapper implements NewsService {
     private static final String TAG = "NewsServiceWrapper";
     
-    private final NewsService wrappedService;
+    private final NewsService newsService;
     private final NewsDao newsDao;
     private final Executor dbExecutor;
     
@@ -28,53 +27,85 @@ public class NewsServiceWrapper implements NewsService {
      * Constructor
      * 
      * @param context Application context
-     * @param wrappedService The actual NewsService implementation to wrap
+     * @param newsService The actual NewsService implementation to wrap
      */
-    public NewsServiceWrapper(Context context, NewsService wrappedService) {
-        this.wrappedService = wrappedService;
+    public NewsServiceWrapper(Context context, NewsService newsService) {
+        this.newsService = newsService;
         this.newsDao = new SqliteNewsDao(context);
         this.dbExecutor = Executors.newSingleThreadExecutor();
     }
     
     @Override
     public CompletableFuture<List<NewsArticle>> getNewsByCategory(NewsCategory category) {
-        // First try to get from the wrapped service
-        return wrappedService.getNewsByCategory(category)
-                .thenApplyAsync(articles -> {
-                    // If successful, save to local storage
-                    if (articles != null && !articles.isEmpty()) {
-                        Log.d(TAG, "Saving " + articles.size() + " articles for " + category.getValue());
-                        newsDao.insertArticles(articles, category);
-                    }
-                    return articles;
-                }, dbExecutor)
-                .exceptionally(e -> {
-                    Log.e(TAG, "Error getting news from network: " + e.getMessage());
-                    // If network request fails, try to return cached data
-                    Log.d(TAG, "Falling back to cached data for " + category.getValue());
-                    return newsDao.getArticlesByCategory(category);
-                });
+        // First check cache
+        CompletableFuture<List<NewsArticle>> cachedResults = CompletableFuture.supplyAsync(() ->
+            newsDao.getArticlesByCategory(category), dbExecutor);
+            
+        // Then fetch from network
+        CompletableFuture<List<NewsArticle>> networkResults = newsService.getNewsByCategory(category)
+            .thenApplyAsync(articles -> {
+                // Cache the results
+                if (articles != null && !articles.isEmpty()) {
+                    newsDao.insertArticles(articles, category.getValue());
+                }
+                return articles;
+            }, dbExecutor);
+            
+        // Combine results from both sources
+        return cachedResults.thenCombine(networkResults, (cached, network) -> {
+            if (network != null && !network.isEmpty()) {
+                return network; // Prefer network results if available
+            }
+            return cached; // Fall back to cached results
+        }).exceptionally(e -> {
+            Log.e(TAG, "Error getting news by category: " + e.getMessage());
+            return null;
+        });
+    }
+    
+    @Override
+    public CompletableFuture<List<NewsArticle>> searchArticles(String keyword) {
+        // First check cache
+        CompletableFuture<List<NewsArticle>> cachedResults = CompletableFuture.supplyAsync(() ->
+            newsDao.searchArticles(keyword), dbExecutor);
+            
+        // Then fetch from network
+        CompletableFuture<List<NewsArticle>> networkResults = newsService.searchArticles(keyword)
+            .thenApplyAsync(articles -> {
+                // Cache the results
+                if (articles != null && !articles.isEmpty()) {
+                    newsDao.insertArticles(articles, keyword);
+                }
+                return articles;
+            }, dbExecutor);
+            
+        // Combine results from both sources
+        return cachedResults.thenCombine(networkResults, (cached, network) -> {
+            if (network != null && !network.isEmpty()) {
+                return network; // Prefer network results if available
+            }
+            return cached; // Fall back to cached results
+        }).exceptionally(e -> {
+            Log.e(TAG, "Error searching articles: " + e.getMessage());
+            return null;
+        });
     }
     
     @Override
     public CompletableFuture<NewsArticle> getArticleDetails(String url) {
-        // First check if article exists in local storage
+        // First check if article exists in local cache
         return CompletableFuture.supplyAsync(() -> newsDao.getArticleByUrl(url), dbExecutor)
                 .thenCompose(cachedArticle -> {
                     if (cachedArticle != null) {
-                        Log.d(TAG, "Cache hit for article: " + url);
                         return CompletableFuture.completedFuture(cachedArticle);
                     }
                     
-                    // If not in cache, delegate to the wrapped service
-                    Log.d(TAG, "Cache miss for article: " + url);
-                    return wrappedService.getArticleDetails(url)
+                    // If not in cache, fetch from network
+                    return newsService.getArticleDetails(url)
                             .thenApplyAsync(article -> {
-                                // Save result to cache if successful
+                                // Save to cache if fetch successful
                                 if (article != null) {
-                                    // We don't know the category here, using HOME as default
-                                    newsDao.insertArticle(article, NewsCategory.HOME);
-                                    Log.d(TAG, "Saved article to cache: " + url);
+                                    newsDao.insertArticle(article, url);
                                 }
                                 return article;
                             }, dbExecutor);
@@ -99,6 +130,6 @@ public class NewsServiceWrapper implements NewsService {
      * @return true if cached articles exist, false otherwise
      */
     public boolean hasCachedArticles(NewsCategory category) {
-        return newsDao.hasCachedArticles(category);
+        return newsDao.hasCachedArticles(category.getValue());
     }
 } 

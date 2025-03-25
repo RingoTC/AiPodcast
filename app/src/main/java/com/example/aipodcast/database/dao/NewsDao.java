@@ -2,87 +2,87 @@ package com.example.aipodcast.database.dao;
 
 import com.example.aipodcast.model.NewsArticle;
 import com.example.aipodcast.model.NewsCategory;
-
 import java.util.List;
 
 /**
- * Data Access Object interface for News Articles
- * Defines the operations that can be performed on news articles in the database
+ * Data Access Object interface for news articles
  */
 public interface NewsDao {
-    
     /**
-     * Insert a single news article into the database
-     * 
-     * @param article The news article to insert
-     * @param category The category these articles belong to
-     * @return The row ID of the inserted article, or -1 if an error occurred
+     * Insert a single article with keyword
+     * @param article Article to insert
+     * @param keyword Search keyword associated with the article
+     * @return Row ID of inserted article
      */
-    long insertArticle(NewsArticle article, NewsCategory category);
-    
+    long insertArticle(NewsArticle article, String keyword);
+
     /**
-     * Insert a batch of news articles into the database
-     * 
-     * @param articles The list of news articles to insert
-     * @param category The category these articles belong to
-     * @return The number of articles successfully inserted
+     * Insert multiple articles with keyword
+     * @param articles List of articles to insert
+     * @param keyword Search keyword associated with the articles
+     * @return Number of articles inserted
      */
-    int insertArticles(List<NewsArticle> articles, NewsCategory category);
-    
+    int insertArticles(List<NewsArticle> articles, String keyword);
+
     /**
-     * Get all news articles for a specific category
-     * 
-     * @param category The news category to filter by
-     * @return A list of news articles in the given category
+     * Search articles by keyword
+     * @param keyword Search keyword
+     * @return List of matching articles
      */
-    List<NewsArticle> getArticlesByCategory(NewsCategory category);
-    
+    List<NewsArticle> searchArticles(String keyword);
+
     /**
-     * Get a specific news article by its URL
-     * 
-     * @param url The URL of the article to retrieve
-     * @return The news article, or null if not found
+     * Get article by URL
+     * @param url Article URL
+     * @return Article if found, null otherwise
      */
     NewsArticle getArticleByUrl(String url);
-    
+
     /**
-     * Update an existing news article
-     * 
-     * @param article The updated news article
-     * @return The number of rows affected (should be 1 if successful)
+     * Update an existing article
+     * @param article Article to update
+     * @return Number of rows affected
      */
     int updateArticle(NewsArticle article);
-    
+
     /**
-     * Delete old articles from a specific category
-     * 
-     * @param category The category to clean up
-     * @param keepLatestCount The number of most recent articles to keep
-     * @return The number of articles deleted
+     * Delete old articles keeping only the most recent ones
+     * @param keepCount Number of most recent articles to keep
+     * @return Number of articles deleted
      */
-    int deleteOldArticles(NewsCategory category, int keepLatestCount);
-    
+    int deleteOldArticles(int keepCount);
+
     /**
-     * Delete all articles for a specific category
-     * 
-     * @param category The category to delete articles for
-     * @return The number of articles deleted
+     * Delete articles by keyword
+     * @param keyword Search keyword
+     * @return Number of articles deleted
      */
-    int deleteArticlesByCategory(NewsCategory category);
-    
+    int deleteArticlesByKeyword(String keyword);
+
     /**
-     * Check if there are any articles stored for a specific category
-     * 
-     * @param category The category to check
-     * @return true if articles exist, false otherwise
+     * Delete all articles
+     * @return Number of articles deleted
      */
-    boolean hasCachedArticles(NewsCategory category);
-    
+    int deleteAllArticles();
+
     /**
-     * Get the timestamp of the most recent update for a category
-     * 
-     * @param category The category to check
-     * @return The timestamp of the most recent update, or 0 if no articles exist
+     * Check if there are cached articles for a keyword
+     * @param keyword Search keyword
+     * @return true if articles exist
      */
-    long getLastUpdateTime(NewsCategory category);
+    boolean hasCachedArticles(String keyword);
+
+    /**
+     * Get last update time for a keyword
+     * @param keyword Search keyword
+     * @return Timestamp of last update
+     */
+    long getLastUpdateTime(String keyword);
+
+    /**
+     * Get articles by category
+     * @param category News category
+     * @return List of articles in the category
+     */
+    List<NewsArticle> getArticlesByCategory(NewsCategory category);
 } 

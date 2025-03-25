@@ -6,12 +6,9 @@ import android.util.Log;
 import com.example.aipodcast.database.dao.NewsDao;
 import com.example.aipodcast.database.dao.SqliteNewsDao;
 import com.example.aipodcast.model.NewsArticle;
-import com.example.aipodcast.model.NewsCategory;
 import com.example.aipodcast.service.NewsService;
 
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
@@ -25,15 +22,12 @@ public class NewsRepositoryImpl implements NewsRepository {
     // Cache expiration time in milliseconds (30 minutes)
     private static final long CACHE_EXPIRATION_MS = 30 * 60 * 1000;
     
-    // Maximum articles to keep per category
-    private static final int MAX_ARTICLES_PER_CATEGORY = 50;
+    // Maximum articles to keep per search
+    private static final int MAX_ARTICLES_PER_SEARCH = 50;
     
     private final NewsService newsService;
     private final NewsDao newsDao;
     private final Executor dbExecutor;
-    
-    // Topic to Category mapping
-    private final Map<String, NewsCategory> topicToCategoryMap;
     
     /**
      * Constructor
@@ -45,69 +39,48 @@ public class NewsRepositoryImpl implements NewsRepository {
         this.newsService = newsService;
         this.newsDao = new SqliteNewsDao(context);
         this.dbExecutor = Executors.newSingleThreadExecutor();
-        
-        // Initialize topic to category mapping
-        this.topicToCategoryMap = new HashMap<>();
-        initializeTopicToCategoryMap();
     }
     
-    private void initializeTopicToCategoryMap() {
-        // Map UI topics to API categories
-        topicToCategoryMap.put("Technology", NewsCategory.SCIENCE);
-        topicToCategoryMap.put("Sports", NewsCategory.HOME);
-        topicToCategoryMap.put("Entertainment", NewsCategory.ARTS);
-        topicToCategoryMap.put("Health", NewsCategory.SCIENCE);
-        topicToCategoryMap.put("Politics", NewsCategory.US);
-        
-        // Default mappings for all categories
-        topicToCategoryMap.put("Arts", NewsCategory.ARTS);
-        topicToCategoryMap.put("Home", NewsCategory.HOME);
-        topicToCategoryMap.put("Science", NewsCategory.SCIENCE);
-        topicToCategoryMap.put("US", NewsCategory.US);
-        topicToCategoryMap.put("World", NewsCategory.WORLD);
+    /**
+     * Search articles by keyword
+     * @param keyword The search keyword
+     * @return CompletableFuture with list of matching articles
+     */
+    public CompletableFuture<List<NewsArticle>> searchArticles(String keyword) {
+        // First try to search in cache
+        CompletableFuture<List<NewsArticle>> cachedResults = CompletableFuture.supplyAsync(() ->
+            newsDao.searchArticles(keyword), dbExecutor);
+            
+        // Then fetch from network
+        CompletableFuture<List<NewsArticle>> networkResults = newsService.searchArticles(keyword)
+            .thenApplyAsync(articles -> {
+                // Cache the results
+                if (articles != null && !articles.isEmpty()) {
+                    newsDao.insertArticles(articles, keyword);
+                    
+                    // Clean up old articles to prevent database from growing too large
+                    newsDao.deleteOldArticles(MAX_ARTICLES_PER_SEARCH);
+                }
+                return articles;
+            }, dbExecutor);
+            
+        // Combine results from both sources
+        return cachedResults.thenCombine(networkResults, (cached, network) -> {
+            if (network != null && !network.isEmpty()) {
+                return network; // Prefer network results if available
+            }
+            return cached; // Fall back to cached results
+        }).exceptionally(e -> {
+            Log.e(TAG, "Error searching articles: " + e.getMessage());
+            return null;
+        });
     }
     
-    @Override
-    public CompletableFuture<List<NewsArticle>> getNewsByCategory(NewsCategory category) {
-        // First check if we have fresh cached data
-        if (hasFreshCache(category)) {
-            return getNewsByCategoryFromCache(category);
-        }
-        
-        // Otherwise fetch from network and update cache
-        return refreshNewsByCategory(category);
-    }
-    
-    @Override
-    public CompletableFuture<List<NewsArticle>> getNewsByCategoryFromCache(NewsCategory category) {
-        return CompletableFuture.supplyAsync(() -> 
-            newsDao.getArticlesByCategory(category), dbExecutor);
-    }
-    
-    @Override
-    public CompletableFuture<List<NewsArticle>> refreshNewsByCategory(NewsCategory category) {
-        return newsService.getNewsByCategory(category)
-                .thenApplyAsync(articles -> {
-                    // Save articles to database
-                    if (articles != null && !articles.isEmpty()) {
-                        newsDao.insertArticles(articles, category);
-                        
-                        // Clean up old articles to prevent database from growing too large
-                        newsDao.deleteOldArticles(category, MAX_ARTICLES_PER_CATEGORY);
-                    }
-                    return articles;
-                }, dbExecutor)
-                .exceptionally(e -> {
-                    Log.e(TAG, "Error refreshing news: " + e.getMessage());
-                    // If network request fails, try to return cached data
-                    if (hasCachedData(category)) {
-                        return newsDao.getArticlesByCategory(category);
-                    }
-                    return null;
-                });
-    }
-    
-    @Override
+    /**
+     * Get article details by URL
+     * @param url The article URL
+     * @return CompletableFuture with article details
+     */
     public CompletableFuture<NewsArticle> getArticleDetails(String url) {
         // First check if article exists in local cache
         return CompletableFuture.supplyAsync(() -> newsDao.getArticleByUrl(url), dbExecutor)
@@ -116,54 +89,44 @@ public class NewsRepositoryImpl implements NewsRepository {
                         return CompletableFuture.completedFuture(cachedArticle);
                     }
                     
-                    // If not in cache, try to fetch from network
+                    // If not in cache, fetch from network
                     return newsService.getArticleDetails(url)
                             .thenApplyAsync(article -> {
                                 // Save to cache if fetch successful
                                 if (article != null) {
-                                    // We don't know the category here, using HOME as default
-                                    newsDao.insertArticle(article, NewsCategory.HOME);
+                                    // Use the URL as the keyword for article details
+                                    newsDao.insertArticle(article, url);
                                 }
                                 return article;
-                            }, dbExecutor)
-                            .exceptionally(e -> {
-                                Log.e(TAG, "Error fetching article details: " + e.getMessage());
-                                return null;
-                            });
+                            }, dbExecutor);
                 });
     }
     
-    @Override
-    public NewsCategory getCategoryForTopic(String topic) {
-        return topicToCategoryMap.getOrDefault(topic, NewsCategory.HOME);
-    }
-    
-    @Override
-    public CompletableFuture<Void> clearCategoryCache(NewsCategory category) {
-        return CompletableFuture.runAsync(() -> {
-            newsDao.deleteArticlesByCategory(category);
-        }, dbExecutor);
-    }
-    
-    @Override
-    public boolean hasCachedData(NewsCategory category) {
-        return newsDao.hasCachedArticles(category);
+    /**
+     * Check if there is cached data for a keyword
+     * @param keyword The search keyword
+     * @return true if cached data exists
+     */
+    public boolean hasCachedData(String keyword) {
+        return newsDao.hasCachedArticles(keyword);
     }
     
     /**
-     * Check if the cache for a category is fresh (not expired)
-     * 
-     * @param category The category to check
-     * @return true if cache is fresh, false if stale or empty
+     * Clear the cache for a specific keyword
+     * @param keyword The search keyword
      */
-    private boolean hasFreshCache(NewsCategory category) {
-        if (!hasCachedData(category)) {
-            return false;
-        }
-        
-        long lastUpdateTime = newsDao.getLastUpdateTime(category);
-        long currentTime = System.currentTimeMillis();
-        
-        return (currentTime - lastUpdateTime) < CACHE_EXPIRATION_MS;
+    public CompletableFuture<Void> clearCache(String keyword) {
+        return CompletableFuture.runAsync(() -> {
+            newsDao.deleteArticlesByKeyword(keyword);
+        }, dbExecutor);
+    }
+    
+    /**
+     * Clear all cached articles
+     */
+    public CompletableFuture<Void> clearAllCache() {
+        return CompletableFuture.runAsync(() -> {
+            newsDao.deleteAllArticles();
+        }, dbExecutor);
     }
 } 

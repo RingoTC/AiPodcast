@@ -15,9 +15,16 @@ public interface NewsService {
     CompletableFuture<List<NewsArticle>> getNewsByCategory(NewsCategory category);
     
     /**
+     * Search articles by keyword
+     * @param keyword The search keyword
+     * @return CompletableFuture with list of matching articles
+     */
+    CompletableFuture<List<NewsArticle>> searchArticles(String keyword);
+    
+    /**
      * Get article details by URL
-     * @param url the article URL
-     * @return a future that completes with the article details
+     * @param url The article URL
+     * @return CompletableFuture with article details
      */
     CompletableFuture<NewsArticle> getArticleDetails(String url);
 }

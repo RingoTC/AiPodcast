@@ -13,7 +13,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     private static final String TAG = "DatabaseHelper";
     
     // Database Version
-    private static final int DATABASE_VERSION = 1;
+    private static final int DATABASE_VERSION = 2;
     
     // Database Name
     private static final String DATABASE_NAME = "news_db";
@@ -32,7 +32,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COLUMN_URL = "url";
     public static final String COLUMN_SECTION = "section";
     public static final String COLUMN_PUBLISHED_DATE = "published_date";
-    public static final String COLUMN_CATEGORY = "category";
+    public static final String COLUMN_KEYWORD = "keyword";
     
     // Create Table Statements
     // News table create statement
@@ -43,11 +43,15 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             + COLUMN_URL + " TEXT UNIQUE NOT NULL,"
             + COLUMN_SECTION + " TEXT,"
             + COLUMN_PUBLISHED_DATE + " TEXT,"
-            + COLUMN_CATEGORY + " TEXT,"
+            + COLUMN_KEYWORD + " TEXT,"
             + COLUMN_CREATED_AT + " DATETIME DEFAULT CURRENT_TIMESTAMP,"
             + COLUMN_UPDATED_AT + " DATETIME DEFAULT CURRENT_TIMESTAMP"
             + ")";
             
+    // Create Index for keyword search
+    private static final String CREATE_INDEX_KEYWORDS = "CREATE INDEX idx_keywords ON " 
+            + TABLE_NEWS + "(" + COLUMN_KEYWORD + ")";
+    
     // Singleton instance
     private static DatabaseHelper sInstance;
     
@@ -74,21 +78,21 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     
     @Override
     public void onCreate(SQLiteDatabase db) {
-        // Creating required tables
+        // Creating required tables and indexes
         db.execSQL(CREATE_TABLE_NEWS);
-        Log.i(TAG, "Database tables created");
+        db.execSQL(CREATE_INDEX_KEYWORDS);
+        Log.i(TAG, "Database tables and indexes created");
     }
     
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
         Log.w(TAG, "Upgrading database from version " + oldVersion + " to " + newVersion);
         
-        // For simplicity in version 1, we'll just drop and recreate tables
-        // In a production app, you would implement a proper migration strategy
-        db.execSQL("DROP TABLE IF EXISTS " + TABLE_NEWS);
-        
-        // Create new tables
-        onCreate(db);
+        if (oldVersion < 2) {
+            // Add keyword column and index
+            db.execSQL("ALTER TABLE " + TABLE_NEWS + " ADD COLUMN " + COLUMN_KEYWORD + " TEXT");
+            db.execSQL(CREATE_INDEX_KEYWORDS);
+        }
     }
     
     /**

@@ -5,6 +5,7 @@ import android.content.Context;
 import com.example.aipodcast.service.NYTimesNewsService;
 import com.example.aipodcast.service.NewsService;
 import com.example.aipodcast.service.NewsServiceWrapper;
+import com.example.aipodcast.BuildConfig;
 
 /**
  * Provider class for accessing the NewsRepository
@@ -12,9 +13,6 @@ import com.example.aipodcast.service.NewsServiceWrapper;
  */
 public class NewsRepositoryProvider {
     private static NewsRepository sInstance;
-    
-    // NYTimes API Key - In a real app, this would be in BuildConfig or fetched securely
-    private static final String API_KEY = "YOUR_API_KEY";
     
     /**
      * Get the singleton instance of NewsRepository
@@ -25,7 +23,7 @@ public class NewsRepositoryProvider {
     public static synchronized NewsRepository getRepository(Context context) {
         if (sInstance == null) {
             // Create the base news service
-            NewsService baseNewsService = new NYTimesNewsService(API_KEY);
+            NewsService baseNewsService = new NYTimesNewsService(BuildConfig.NYT_ARTICLE_API_KEY);
             
             // Wrap it with caching functionality
             NewsService newsService = new NewsServiceWrapper(context.getApplicationContext(), baseNewsService);
