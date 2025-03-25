@@ -1,75 +1,316 @@
 package com.example.aipodcast;
 
+import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.MenuItem;
+import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageView;
+import android.widget.ProgressBar;
 import android.widget.RadioGroup;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.browser.customtabs.CustomTabsIntent;
+import androidx.recyclerview.widget.DividerItemDecoration;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 
+import com.example.aipodcast.adapter.NewsAdapter;
 import com.example.aipodcast.model.NewsArticle;
-import com.example.aipodcast.service.NYTimesNewsService;
+import com.example.aipodcast.model.NewsCategory;
+import com.example.aipodcast.repository.NewsRepository;
+import com.example.aipodcast.repository.NewsRepositoryProvider;
+import com.google.android.material.chip.Chip;
+import com.google.android.material.chip.ChipGroup;
+import com.google.android.material.snackbar.Snackbar;
 
+import java.net.UnknownHostException;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
+/**
+ * Activity for searching news articles based on keywords and displaying the results.
+ * Implements a clean architecture approach by leveraging the repository pattern.
+ */
 public class InputActivity extends AppCompatActivity {
 
-    EditText keywordInput;
-    RadioGroup newsTypeGroup;
-    TextView responseOutput;
-    Button submitButton;
+    private static final String TAG = "InputActivity";
+
+    // UI components
+    private ImageView logoSmall;
+    private TextView searchTitle;
+    private EditText keywordInput;
+    private ChipGroup categoryChipGroup;
+    private ProgressBar progressBar;
+    private RecyclerView newsRecyclerView;
+    private TextView emptyStateView;
+    private Button submitButton;
+
+    // Data
+    private NewsAdapter newsAdapter;
+    private NewsRepository newsRepository;
+    private List<NewsArticle> currentArticles = new ArrayList<>();
+    private Map<Integer, NewsCategory> chipCategoryMap = new HashMap<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        
+        // Enable shared element transition
+        supportPostponeEnterTransition();
+        
         setContentView(R.layout.activity_input);
 
-        // Link views
+        // Initialize repository
+        newsRepository = NewsRepositoryProvider.getRepository(this);
+        
+        // Initialize UI components
+        initializeViews();
+        setupRecyclerView();
+        setupCategoryChips();
+        setupListeners();
+        
+        // Complete transition
+        supportStartPostponedEnterTransition();
+        
+        // Enable back navigation
+        if (getSupportActionBar() != null) {
+            getSupportActionBar().setDisplayHomeAsUpEnabled(true);
+            getSupportActionBar().setTitle("News Search");
+        }
+    }
+
+    /**
+     * Initialize and bind all UI views from layout
+     */
+    private void initializeViews() {
+        logoSmall = findViewById(R.id.logo_small);
+        searchTitle = findViewById(R.id.search_title);
         keywordInput = findViewById(R.id.input_keyword);
-        newsTypeGroup = findViewById(R.id.news_type_group);
-        responseOutput = findViewById(R.id.response_output);
+        categoryChipGroup = findViewById(R.id.category_chip_group);
+        progressBar = findViewById(R.id.progress_bar);
+        newsRecyclerView = findViewById(R.id.news_recycler_view);
+        emptyStateView = findViewById(R.id.empty_state_view);
         submitButton = findViewById(R.id.btn_submit);
+    }
 
-        submitButton.setOnClickListener(v -> {
-            String keyword = keywordInput.getText().toString().trim();
+    /**
+     * Setup RecyclerView with adapter and layout manager
+     */
+    private void setupRecyclerView() {
+        newsAdapter = new NewsAdapter(currentArticles, this::onArticleClicked);
+        newsRecyclerView.setAdapter(newsAdapter);
+        newsRecyclerView.setLayoutManager(new LinearLayoutManager(this));
+        newsRecyclerView.addItemDecoration(new DividerItemDecoration(this, DividerItemDecoration.VERTICAL));
+    }
 
-            if (keyword.isEmpty()) {
-                responseOutput.setText("Please enter a keyword.");
-                return;
-            }
+    /**
+     * Setup category chips with corresponding news categories
+     */
+    private void setupCategoryChips() {
+        chipCategoryMap.put(R.id.chip_technology, NewsCategory.TECHNOLOGY);
+        chipCategoryMap.put(R.id.chip_entertainment, NewsCategory.ENTERTAINMENT);
+        chipCategoryMap.put(R.id.chip_sports, NewsCategory.SPORTS);
+        chipCategoryMap.put(R.id.chip_health, NewsCategory.HEALTH);
+        chipCategoryMap.put(R.id.chip_politics, NewsCategory.POLITICS);
+    }
 
-            responseOutput.setText("Loading news...");
-
-            Log.d("API_KEY_TEST", "NYT Key = [" + BuildConfig.NYT_ARTICLE_API_KEY + "]");
-
-            // Initialize news service with API key
-            NYTimesNewsService service = new NYTimesNewsService(BuildConfig.NYT_ARTICLE_API_KEY);
-
-            // Perform search
-            CompletableFuture<List<NewsArticle>> future = service.searchArticles(keyword);
-            future.thenAccept(articles -> runOnUiThread(() -> {
-                if (articles.isEmpty()) {
-                    responseOutput.setText("No news found.");
-                } else {
-                    StringBuilder result = new StringBuilder();
-                    for (NewsArticle article : articles) {
-                        result.append("• ")
-                                .append(article.getTitle())
-                                .append("\n")
-                                .append(article.getAbstract())
-                                .append("\n")
-                                .append(article.getPublishedDate())
-                                .append("\n\n");
-                    }
-                    responseOutput.setText(result.toString());
+    /**
+     * Setup click listeners for interactive elements
+     */
+    private void setupListeners() {
+        submitButton.setOnClickListener(v -> performSearch());
+        
+        // Add listener for category selection
+        categoryChipGroup.setOnCheckedStateChangeListener((group, checkedIds) -> {
+            if (!checkedIds.isEmpty()) {
+                int selectedChipId = checkedIds.get(0);
+                Log.d(TAG, "Selected category: " + chipCategoryMap.get(selectedChipId));
+                
+                // Auto-search when category changes if there's already a keyword
+                String keyword = keywordInput.getText().toString().trim();
+                if (!keyword.isEmpty()) {
+                    performSearch();
                 }
-            })).exceptionally(e -> {
-                runOnUiThread(() -> responseOutput.setText("Error: " + e.getMessage()));
-                return null;
-            });
+            }
         });
+        
+        // Add keyboard search action
+        keywordInput.setOnEditorActionListener((v, actionId, event) -> {
+            performSearch();
+            return true;
+        });
+    }
+
+    /**
+     * Handle user clicks on news articles
+     */
+    private void onArticleClicked(NewsArticle article) {
+        // Open article in Custom Chrome Tab
+        try {
+            CustomTabsIntent customTabsIntent = new CustomTabsIntent.Builder()
+                    .setToolbarColor(getResources().getColor(R.color.purple_500, getTheme()))
+                    .setShowTitle(true)
+                    .build();
+            
+            customTabsIntent.launchUrl(this, Uri.parse(article.getUrl()));
+        } catch (Exception e) {
+            Log.e(TAG, "Error opening article: " + e.getMessage());
+            Toast.makeText(this, "Error opening article", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /**
+     * Perform the news search based on user input
+     */
+    private void performSearch() {
+        String keyword = keywordInput.getText().toString().trim();
+
+        if (keyword.isEmpty()) {
+            showError("Please enter a keyword");
+            return;
+        }
+
+        // Show loading state
+        setLoadingState(true);
+        
+        // Get selected category (if any)
+        NewsCategory selectedCategory = null;
+        int checkedChipId = categoryChipGroup.getCheckedChipId();
+        if (checkedChipId != View.NO_ID) {
+            selectedCategory = chipCategoryMap.get(checkedChipId);
+            Log.d(TAG, "Searching for keyword: " + keyword + " in category: " + selectedCategory);
+        } else {
+            Log.d(TAG, "Searching for keyword: " + keyword + " in all categories");
+        }
+        
+        // Check if we have cached results first
+        if (newsRepository.hasCachedData(keyword)) {
+            Log.d(TAG, "Using cached data for: " + keyword);
+            Snackbar.make(keywordInput, "Using cached results", Snackbar.LENGTH_SHORT).show();
+        }
+
+        // Perform search using repository
+        final NewsCategory finalSelectedCategory = selectedCategory;
+        CompletableFuture<List<NewsArticle>> future = newsRepository.searchArticles(keyword);
+        
+        future.thenAccept(articles -> runOnUiThread(() -> {
+            setLoadingState(false);
+            
+            if (articles == null || articles.isEmpty()) {
+                showEmptyState("No news found for \"" + keyword + "\"");
+            } else {
+                // Filter by category if selected
+                if (finalSelectedCategory != null) {
+                    List<NewsArticle> filteredArticles = new ArrayList<>();
+                    for (NewsArticle article : articles) {
+                        if (finalSelectedCategory.getValue().equalsIgnoreCase(article.getSection())) {
+                            filteredArticles.add(article);
+                        }
+                    }
+                    
+                    if (filteredArticles.isEmpty()) {
+                        showEmptyState("No " + finalSelectedCategory.getValue() + " news found for \"" + keyword + "\"");
+                    } else {
+                        showResults(filteredArticles);
+                    }
+                } else {
+                    showResults(articles);
+                }
+            }
+        })).exceptionally(e -> {
+            runOnUiThread(() -> {
+                setLoadingState(false);
+                
+                Throwable cause = e.getCause();
+                if (cause instanceof UnknownHostException) {
+                    showError("Network error. Please check your connection");
+                } else {
+                    showError("Error: " + e.getMessage());
+                }
+                
+                Log.e(TAG, "Search error", e);
+            });
+            return null;
+        });
+    }
+
+    /**
+     * Display search results in the RecyclerView
+     */
+    private void showResults(List<NewsArticle> articles) {
+        emptyStateView.setVisibility(View.GONE);
+        newsRecyclerView.setVisibility(View.VISIBLE);
+        
+        currentArticles.clear();
+        currentArticles.addAll(articles);
+        newsAdapter.notifyDataSetChanged();
+        
+        // Scroll to top
+        if (!articles.isEmpty()) {
+            newsRecyclerView.smoothScrollToPosition(0);
+        }
+    }
+
+    /**
+     * Show empty state with custom message
+     */
+    private void showEmptyState(String message) {
+        newsRecyclerView.setVisibility(View.GONE);
+        emptyStateView.setVisibility(View.VISIBLE);
+        emptyStateView.setText(message);
+    }
+
+    /**
+     * Show error message to user
+     */
+    private void showError(String message) {
+        Snackbar.make(keywordInput, message, Snackbar.LENGTH_LONG).show();
+    }
+
+    /**
+     * Toggle loading state UI elements
+     */
+    private void setLoadingState(boolean isLoading) {
+        progressBar.setVisibility(isLoading ? View.VISIBLE : View.GONE);
+        submitButton.setEnabled(!isLoading);
+        keywordInput.setEnabled(!isLoading);
+        
+        // Disable category selection during loading
+        for (int i = 0; i < categoryChipGroup.getChildCount(); i++) {
+            View child = categoryChipGroup.getChildAt(i);
+            if (child instanceof Chip) {
+                child.setEnabled(!isLoading);
+            }
+        }
+    }
+    
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        if (item.getItemId() == android.R.id.home) {
+            // Handle the back button press with transition animation
+            finishAfterTransition();
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
+    }
+
+    @Override
+    public void onBackPressed() {
+        // Handle back button with proper transition
+        finishAfterTransition();
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        // Clean up resources if needed
     }
 }
