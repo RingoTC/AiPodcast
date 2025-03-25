@@ -15,8 +15,10 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // Place your API key in local.properties instead of hardcoding it
-        buildConfigField("String", "NYT_API_KEY", "\"${project.findProperty("nyt.api.key") ?: ""}\"")
+        // Place API key in local.properties instead of hardcoding it
+//        buildConfigField("String", "NYT_API_KEY", "\"${project.findProperty("nyt.api.key") ?: ""}\"")
+//        buildConfigField("String", "NYT_API_KEY", "\"GQ0kAFD5l57Ugb4lWgMOmbE3RP2i4032\"")
+        buildConfigField("String", "NYT_ARTICLE_API_KEY", "\"sZKjNmFxq8pYoilAlp0BX8iP1CKEVxR2\"")
     }
 
     buildTypes {

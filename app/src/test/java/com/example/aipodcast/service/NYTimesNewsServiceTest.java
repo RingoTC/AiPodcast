@@ -25,7 +25,7 @@ public class NYTimesNewsServiceTest {
     
     @Test
     public void testGetNewsByCategory() throws ExecutionException, InterruptedException {
-        CompletableFuture<List<NewsArticle>> futureArticles = newsService.getNewsByCategory(NewsCategory.ARTS);
+        CompletableFuture<List<NewsArticle>> futureArticles = newsService.getNewsByCategory(NewsCategory.ENTERTAINMENT);
         List<NewsArticle> articles = futureArticles.get();
         
         assertNotNull("Articles list should not be null", articles);
