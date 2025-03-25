@@ -187,7 +187,7 @@ public class SqliteNewsDao implements NewsDao {
     @Override
     public int deleteOldArticles(NewsCategory category, int keepLatestCount) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
-        int rowsDeleted = 0;
+        long rowsDeleted = 0;
         
         try {
             // Select articles to keep (LIMIT won't work in DELETE query in SQLite)
@@ -211,7 +211,7 @@ public class SqliteNewsDao implements NewsDao {
             Log.e(TAG, "Error deleting old articles: " + e.getMessage());
         }
         
-        return rowsDeleted;
+        return (int) rowsDeleted;
     }
     
     @Override
