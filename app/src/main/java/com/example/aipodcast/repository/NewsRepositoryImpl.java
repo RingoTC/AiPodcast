@@ -75,6 +75,8 @@ public class NewsRepositoryImpl implements NewsRepository {
             return null;
         });
     }
+
+
     
     /**
      * Get article details by URL
