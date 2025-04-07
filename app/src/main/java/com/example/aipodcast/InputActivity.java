@@ -10,6 +10,7 @@ import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.RadioGroup;
+import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -24,6 +25,8 @@ import com.example.aipodcast.model.NewsArticle;
 import com.example.aipodcast.model.NewsCategory;
 import com.example.aipodcast.repository.NewsRepository;
 import com.example.aipodcast.repository.NewsRepositoryProvider;
+import com.example.aipodcast.service.TextToSpeechHelper;
+import com.google.android.material.button.MaterialButton;
 import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.chip.Chip;
 import com.google.android.material.chip.ChipGroup;
@@ -55,6 +58,10 @@ public class InputActivity extends AppCompatActivity {
     private TextView emptyStateView;
     private Button submitButton;
     private MaterialCardView searchCard;
+    private SeekBar timeSeekBar;
+    private TextView timeLabel;
+    private int selectedTime = 0;
+    private TextToSpeechHelper ttsHelper;
 
     // Data
     private NewsAdapter newsAdapter;
@@ -90,6 +97,7 @@ public class InputActivity extends AppCompatActivity {
         
         // Complete transition
         supportStartPostponedEnterTransition();
+
     }
 
     /**
@@ -106,6 +114,20 @@ public class InputActivity extends AppCompatActivity {
         emptyStateView = findViewById(R.id.empty_state_view);
         submitButton = findViewById(R.id.btn_submit);
         searchCard = findViewById(R.id.search_card);
+        timeSeekBar = findViewById(R.id.time_seekbar);
+        timeLabel = findViewById(R.id.time_label);
+
+        timeSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                selectedTime = progress;
+                timeLabel.setText("Travel Time: " + progress + " min");
+            }
+
+            @Override public void onStartTrackingTouch(SeekBar seekBar) { }
+
+            @Override public void onStopTrackingTouch(SeekBar seekBar) { }
+        });
     }
     
     /**
@@ -368,12 +390,16 @@ public class InputActivity extends AppCompatActivity {
     @Override
     public void onBackPressed() {
         // Handle back button with proper transition
+        super.onBackPressed();
         finishAfterTransition();
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        if (ttsHelper != null) {
+            ttsHelper.shutdown();
+        }
         // Clean up resources if needed
     }
 }
