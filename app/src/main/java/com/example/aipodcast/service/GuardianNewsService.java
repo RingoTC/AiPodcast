@@ -64,7 +64,10 @@ public class GuardianNewsService implements NewsService {
     public CompletableFuture<NewsArticle> getArticleDetails(String url) {
         return CompletableFuture.supplyAsync(() -> {
             try {
-                String apiUrl = url + "?show-fields=bodyText,thumbnail&api-key=" + apiKey;
+                // Guardian API expects the path after the domain
+                String apiUrl = url.replace("https://www.theguardian.com", "https://content.guardianapis.com")
+                    + "?show-fields=bodyText,thumbnail"
+                    + "&api-key=" + apiKey;
 
                 Request request = new Request.Builder()
                         .url(apiUrl)

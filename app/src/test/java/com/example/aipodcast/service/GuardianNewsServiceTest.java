@@ -25,8 +25,7 @@ public class GuardianNewsServiceTest {
     public void setup() throws IOException {
         // Load API key from local.properties
         Properties properties = new Properties();
-        String rootDir = System.getProperty("user.dir");
-        FileInputStream input = new FileInputStream(rootDir + "/local.properties");
+        FileInputStream input = new FileInputStream("../local.properties");
         properties.load(input);
         guardianApiKey = properties.getProperty("guardian.api.key");
         input.close();

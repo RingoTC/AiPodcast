@@ -31,7 +31,7 @@ public class NYTimesNewsService implements NewsService {
     public CompletableFuture<List<NewsArticle>> getNewsByCategory(NewsCategory category) {
         return CompletableFuture.supplyAsync(() -> {
             try {
-                String query = "section_name:" + category.getValue();
+                String query = "section_name:" + category.getValue().toLowerCase();
                 String encodedQuery = URLEncoder.encode(query, "UTF-8");
                 String url = BASE_URL + "?fq=" + encodedQuery + "&api-key=" + apiKey;
 
@@ -40,12 +40,26 @@ public class NYTimesNewsService implements NewsService {
                         .build();
 
                 try (Response response = client.newCall(request).execute()) {
-                    if (!response.isSuccessful()) throw new IOException("Unexpected response " + response);
+                    if (!response.isSuccessful()) {
+                        String errorBody = response.body().string();
+                        System.out.println("Error response: " + errorBody);
+                        throw new IOException("Unexpected response " + response);
+                    }
 
                     String responseData = response.body().string();
+                    System.out.println("API Response: " + responseData);
+                    
                     JSONObject json = new JSONObject(responseData);
-                    JSONArray docs = json.getJSONObject("response").getJSONArray("docs");
-
+                    if (!json.has("response")) {
+                        throw new JSONException("Response object not found in JSON");
+                    }
+                    
+                    JSONObject responseObj = json.getJSONObject("response");
+                    if (!responseObj.has("docs")) {
+                        throw new JSONException("Docs array not found in response");
+                    }
+                    
+                    JSONArray docs = responseObj.getJSONArray("docs");
                     List<NewsArticle> articles = new ArrayList<>();
                     for (int i = 0; i < docs.length(); i++) {
                         JSONObject doc = docs.getJSONObject(i);
@@ -55,6 +69,8 @@ public class NYTimesNewsService implements NewsService {
                     return articles;
                 }
             } catch (IOException | JSONException e) {
+                System.out.println("Error: " + e.getMessage());
+                e.printStackTrace();
                 throw new RuntimeException("Error fetching articles by category", e);
             }
         });
@@ -63,30 +79,7 @@ public class NYTimesNewsService implements NewsService {
     @Override
     public CompletableFuture<NewsArticle> getArticleDetails(String url) {
         return CompletableFuture.supplyAsync(() -> {
-            try {
-                String encodedUrl = URLEncoder.encode("web_url:\"" + url + "\"", "UTF-8");
-                String apiUrl = BASE_URL + "?fq=" + encodedUrl + "&api-key=" + apiKey;
-
-                Request request = new Request.Builder()
-                        .url(apiUrl)
-                        .build();
-
-                try (Response response = client.newCall(request).execute()) {
-                    if (!response.isSuccessful()) throw new IOException("Unexpected response " + response);
-
-                    String responseData = response.body().string();
-                    JSONObject json = new JSONObject(responseData);
-                    JSONArray docs = json.getJSONObject("response").getJSONArray("docs");
-
-                    if (docs.length() == 0) {
-                        throw new RuntimeException("Article not found");
-                    }
-
-                    return parseArticle(docs.getJSONObject(0));
-                }
-            } catch (IOException | JSONException e) {
-                throw new RuntimeException("Error fetching article details", e);
-            }
+            throw new UnsupportedOperationException("Article details not supported for NYTimes API");
         });
     }
 
