@@ -8,7 +8,6 @@ import android.util.Log;
 
 import com.example.aipodcast.database.DatabaseHelper;
 import com.example.aipodcast.model.NewsArticle;
-import com.example.aipodcast.model.NewsCategory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -249,16 +248,22 @@ public class SqliteNewsDao implements NewsDao {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         boolean hasArticles = false;
         
-        String query = "SELECT COUNT(*) FROM " + DatabaseHelper.TABLE_NEWS + 
-                " WHERE " + DatabaseHelper.COLUMN_KEYWORD + " = ?";
-        String[] args = {keyword};
+        String selection = DatabaseHelper.COLUMN_KEYWORD + " = ?";
+        String[] selectionArgs = {keyword};
         
         Cursor cursor = null;
         try {
-            cursor = db.rawQuery(query, args);
+            cursor = db.query(
+                    DatabaseHelper.TABLE_NEWS,
+                    new String[]{"COUNT(*)"},
+                    selection,
+                    selectionArgs,
+                    null,
+                    null,
+                    null);
+            
             if (cursor != null && cursor.moveToFirst()) {
-                int count = cursor.getInt(0);
-                hasArticles = count > 0;
+                hasArticles = cursor.getInt(0) > 0;
             }
         } catch (Exception e) {
             Log.e(TAG, "Error checking cached articles: " + e.getMessage());
@@ -274,17 +279,26 @@ public class SqliteNewsDao implements NewsDao {
     @Override
     public long getLastUpdateTime(String keyword) {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
-        long timestamp = 0;
+        long lastUpdateTime = 0;
         
-        String query = "SELECT MAX(" + DatabaseHelper.COLUMN_UPDATED_AT + ") FROM " + 
-                DatabaseHelper.TABLE_NEWS + " WHERE " + DatabaseHelper.COLUMN_KEYWORD + " = ?";
-        String[] args = {keyword};
+        String selection = DatabaseHelper.COLUMN_KEYWORD + " = ?";
+        String[] selectionArgs = {keyword};
+        String orderBy = DatabaseHelper.COLUMN_UPDATED_AT + " DESC";
         
         Cursor cursor = null;
         try {
-            cursor = db.rawQuery(query, args);
-            if (cursor != null && cursor.moveToFirst() && !cursor.isNull(0)) {
-                timestamp = cursor.getLong(0);
+            cursor = db.query(
+                    DatabaseHelper.TABLE_NEWS,
+                    new String[]{DatabaseHelper.COLUMN_UPDATED_AT},
+                    selection,
+                    selectionArgs,
+                    null,
+                    null,
+                    orderBy,
+                    "1");
+            
+            if (cursor != null && cursor.moveToFirst()) {
+                lastUpdateTime = cursor.getLong(0);
             }
         } catch (Exception e) {
             Log.e(TAG, "Error getting last update time: " + e.getMessage());
@@ -294,50 +308,9 @@ public class SqliteNewsDao implements NewsDao {
             }
         }
         
-        return timestamp;
+        return lastUpdateTime;
     }
     
-    @Override
-    public List<NewsArticle> getArticlesByCategory(NewsCategory category) {
-        SQLiteDatabase db = dbHelper.getReadableDatabase();
-        List<NewsArticle> articles = new ArrayList<>();
-        
-        String selection = DatabaseHelper.COLUMN_SECTION + " = ?";
-        String[] selectionArgs = {category.getValue()};
-        
-        Cursor cursor = null;
-        try {
-            cursor = db.query(
-                    DatabaseHelper.TABLE_NEWS,
-                    null,
-                    selection,
-                    selectionArgs,
-                    null,
-                    null,
-                    DatabaseHelper.COLUMN_UPDATED_AT + " DESC");
-            
-            if (cursor != null) {
-                while (cursor.moveToNext()) {
-                    NewsArticle article = cursorToArticle(cursor);
-                    if (article != null) {
-                        articles.add(article);
-                    }
-                }
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error getting articles by category: " + e.getMessage());
-        } finally {
-            if (cursor != null) {
-                cursor.close();
-            }
-        }
-        
-        return articles;
-    }
-    
-    /**
-     * Helper method to create ContentValues from a NewsArticle
-     */
     private ContentValues createContentValues(NewsArticle article, String keyword) {
         ContentValues values = new ContentValues();
         values.put(DatabaseHelper.COLUMN_TITLE, article.getTitle());
@@ -350,9 +323,6 @@ public class SqliteNewsDao implements NewsDao {
         return values;
     }
     
-    /**
-     * Helper method to convert a cursor to a NewsArticle
-     */
     private NewsArticle cursorToArticle(Cursor cursor) {
         String title = cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COLUMN_TITLE));
         String abstract_ = cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COLUMN_ABSTRACT));

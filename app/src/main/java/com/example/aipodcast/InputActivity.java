@@ -12,7 +12,6 @@ import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.Spinner;
 import android.widget.ProgressBar;
-import android.widget.RadioGroup;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -24,19 +23,14 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.example.aipodcast.adapter.NewsAdapter;
 import com.example.aipodcast.model.NewsArticle;
-import com.example.aipodcast.model.NewsCategory;
 import com.example.aipodcast.repository.NewsRepository;
 import com.example.aipodcast.repository.NewsRepositoryProvider;
 import com.google.android.material.card.MaterialCardView;
-import com.google.android.material.chip.Chip;
-import com.google.android.material.chip.ChipGroup;
 import com.google.android.material.snackbar.Snackbar;
 
 import java.net.UnknownHostException;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -52,7 +46,6 @@ public class InputActivity extends AppCompatActivity {
     private ImageView logoSmall;
     private TextView searchTitle;
     private EditText keywordInput;
-    private ChipGroup categoryChipGroup;
     private ProgressBar progressBar;
     private RecyclerView newsRecyclerView;
     private TextView emptyStateView;
@@ -64,9 +57,7 @@ public class InputActivity extends AppCompatActivity {
     private NewsAdapter newsAdapter;
     private NewsRepository newsRepository;
     private List<NewsArticle> currentArticles = new ArrayList<>();
-    private Map<Integer, NewsCategory> chipCategoryMap = new HashMap<>();
     private String selectedSortBy = "relevancy";
-    private NewsCategory selectedCategoryFilter = null;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -88,7 +79,6 @@ public class InputActivity extends AppCompatActivity {
         // Initialize UI components
         initializeViews();
         setupRecyclerView();
-        setupCategoryChips();
         setupListeners();
         setupSortBySpinner();
 
@@ -107,7 +97,6 @@ public class InputActivity extends AppCompatActivity {
         logoSmall = findViewById(R.id.logo_small);
         searchTitle = findViewById(R.id.search_title);
         keywordInput = findViewById(R.id.input_keyword);
-        categoryChipGroup = findViewById(R.id.category_chip_group);
         progressBar = findViewById(R.id.progress_bar);
         newsRecyclerView = findViewById(R.id.news_recycler_view);
         emptyStateView = findViewById(R.id.empty_state_view);
@@ -152,41 +141,9 @@ public class InputActivity extends AppCompatActivity {
     }
 
     /**
-     * Setup category chips with corresponding news categories
+     * Setup sort by spinner
      */
-    private void setupCategoryChips() {
-        Log.d(TAG, "setupCategoryChips() is called");
-        chipCategoryMap.put(R.id.chip_technology, NewsCategory.TECHNOLOGY);
-        chipCategoryMap.put(R.id.chip_entertainment, NewsCategory.ENTERTAINMENT);
-        chipCategoryMap.put(R.id.chip_sports, NewsCategory.SPORTS);
-        chipCategoryMap.put(R.id.chip_health, NewsCategory.HEALTH);
-        chipCategoryMap.put(R.id.chip_politics, NewsCategory.POLITICS);
-
-        categoryChipGroup.setOnCheckedStateChangeListener((group, checkedIds) -> {
-            Log.d(TAG, "Category chip checked state changed");
-            if (!checkedIds.isEmpty()) {
-                int selectedChipId = checkedIds.get(0);
-                selectedCategoryFilter = chipCategoryMap.get(selectedChipId);
-                Log.d(TAG, "Selected category: " + selectedCategoryFilter);
-                performSearch(); // Perform search immediately when a category is selected
-            } else {
-                selectedCategoryFilter = null;
-                // Optionally clear results or show a default message when no category is selected
-                if (keywordInput.getText().toString().trim().isEmpty()) {
-                    currentArticles.clear();
-                    newsAdapter.notifyDataSetChanged();
-                    emptyStateView.setText("Select a category or enter a keyword to search");
-                    emptyStateView.setVisibility(View.VISIBLE);
-                    newsRecyclerView.setVisibility(View.GONE);
-                } else {
-                    performSearch(); // If keyword is present, search across all categories
-                }
-            }
-        });
-    }
-
     private void setupSortBySpinner() {
-        // Define the sorting options that NewsAPI supports for /everything endpoint
         List<String> sortOptions = new ArrayList<>();
         sortOptions.add("Relevance");
         sortOptions.add("Newest");
@@ -198,7 +155,6 @@ public class InputActivity extends AppCompatActivity {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
                 String selectedOption = parent.getItemAtPosition(position).toString();
-                // Convert the display string to the NewsAPI parameter value
                 switch (selectedOption) {
                     case "Relevance":
                         selectedSortBy = "relevancy";
@@ -212,11 +168,10 @@ public class InputActivity extends AppCompatActivity {
 
             @Override
             public void onNothingSelected(AdapterView<?> parent) {
-                selectedSortBy = "relevancy"; // Default
+                selectedSortBy = "relevancy";
             }
         });
     }
-
 
     /**
      * Setup click listeners for interactive elements
@@ -257,63 +212,43 @@ public class InputActivity extends AppCompatActivity {
      */
     private void performSearch() {
         String keyword = keywordInput.getText().toString().trim();
+        if (keyword.isEmpty()) {
+            showError("Please enter a search keyword");
+            return;
+        }
 
-        // Show loading state
         setLoadingState(true);
+        Log.d(TAG, "Searching for keyword: " + keyword + " sorted by: " + selectedSortBy);
 
-        // Get selected category (if any)
-        final NewsCategory finalSelectedCategory = selectedCategoryFilter;
-        Log.d(TAG, "Searching for keyword: " + keyword + " in category: " + finalSelectedCategory + " sorted by: " + selectedSortBy);
-
-        // Perform search using repository
-        CompletableFuture<List<NewsArticle>> future = newsRepository.searchArticles(keyword, finalSelectedCategory);
+        CompletableFuture<List<NewsArticle>> future = newsRepository.searchArticles(keyword);
 
         future.thenAccept(articles -> runOnUiThread(() -> {
             setLoadingState(false);
 
-            List<NewsArticle> filteredAndSortedArticles = new ArrayList<>(articles);
-
-            // Filter by category if selected
-            if (finalSelectedCategory != null) {
-                filteredAndSortedArticles.removeIf(article -> !finalSelectedCategory.getValue().equalsIgnoreCase(article.getSection()));
+            List<NewsArticle> sortedArticles = new ArrayList<>(articles);
+            if (selectedSortBy.equals("publishedAt")) {
+                sortedArticles.sort((a1, a2) -> {
+                    if (a1.getPublishedDate() == null || a2.getPublishedDate() == null) {
+                        return 0;
+                    }
+                    return a2.getPublishedDate().compareTo(a1.getPublishedDate());
+                });
             }
 
-            // Sort the filtered list
-            switch (selectedSortBy) {
-                case "relevancy":
-                    // Assuming the API returns relevant results by default or the repository handles it
-                    break;
-                case "popularity":
-                    // You would need a way to determine popularity. This might require a different API or data.
-                    // For now, we'll leave it as is or you could implement a placeholder sort.
-                    Log.w(TAG, "Sorting by popularity is not directly supported by the current data.");
-                    break;
-                case "publishedAt":
-                    filteredAndSortedArticles.sort((a1, a2) -> {
-                        if (a1.getPublishedDate() == null || a2.getPublishedDate() == null) {
-                            return 0;
-                        }
-                        return a2.getPublishedDate().compareTo(a1.getPublishedDate()); // Newest first
-                    });
-                    break;
-            }
-
-            if (filteredAndSortedArticles.isEmpty()) {
+            if (sortedArticles.isEmpty()) {
                 showEmptyState("No news found matching your criteria");
             } else {
-                showResults(filteredAndSortedArticles);
+                showResults(sortedArticles);
             }
         })).exceptionally(e -> {
             runOnUiThread(() -> {
                 setLoadingState(false);
-
                 Throwable cause = e.getCause();
                 if (cause instanceof UnknownHostException) {
                     showError("Network error. Please check your connection");
                 } else {
                     showError("Error: " + e.getMessage());
                 }
-
                 Log.e(TAG, "Search error", e);
             });
             return null;
@@ -377,6 +312,7 @@ public class InputActivity extends AppCompatActivity {
         progressBar.setVisibility(isLoading ? View.VISIBLE : View.GONE);
         submitButton.setEnabled(!isLoading);
         keywordInput.setEnabled(!isLoading);
+        sortBySpinner.setEnabled(!isLoading);
 
         // Add animation for progress bar
         if (isLoading) {
@@ -387,14 +323,6 @@ public class InputActivity extends AppCompatActivity {
                     .scaleY(1f)
                     .setDuration(300)
                     .start();
-        }
-
-        // Disable category selection during loading
-        for (int i = 0; i < categoryChipGroup.getChildCount(); i++) {
-            View child = categoryChipGroup.getChildAt(i);
-            if (child instanceof Chip) {
-                child.setEnabled(!isLoading);
-            }
         }
     }
 

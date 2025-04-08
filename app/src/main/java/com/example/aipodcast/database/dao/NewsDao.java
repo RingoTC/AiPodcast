@@ -1,7 +1,6 @@
 package com.example.aipodcast.database.dao;
 
 import com.example.aipodcast.model.NewsArticle;
-import com.example.aipodcast.model.NewsCategory;
 import java.util.List;
 
 /**
@@ -78,11 +77,4 @@ public interface NewsDao {
      * @return Timestamp of last update
      */
     long getLastUpdateTime(String keyword);
-
-    /**
-     * Get articles by category
-     * @param category News category
-     * @return List of articles in the category
-     */
-    List<NewsArticle> getArticlesByCategory(NewsCategory category);
 } 

@@ -1,7 +1,6 @@
 package com.example.aipodcast.service;
 
 import com.example.aipodcast.model.NewsArticle;
-import com.example.aipodcast.model.NewsCategory;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -25,67 +24,6 @@ public class GuardianNewsService implements NewsService {
     public GuardianNewsService(String apiKey) {
         this.apiKey = apiKey;
         this.client = new OkHttpClient();
-    }
-
-    @Override
-    public CompletableFuture<List<NewsArticle>> getNewsByCategory(NewsCategory category) {
-        return CompletableFuture.supplyAsync(() -> {
-            try {
-                String url = BASE_URL + "?section=" + category.getValue() 
-                    + "&show-fields=bodyText,thumbnail"
-                    + "&api-key=" + apiKey;
-
-                Request request = new Request.Builder()
-                        .url(url)
-                        .build();
-
-                try (Response response = client.newCall(request).execute()) {
-                    if (!response.isSuccessful()) throw new IOException("Unexpected response " + response);
-
-                    String responseData = response.body().string();
-                    JSONObject json = new JSONObject(responseData);
-                    JSONArray results = json.getJSONObject("response").getJSONArray("results");
-
-                    List<NewsArticle> articles = new ArrayList<>();
-                    for (int i = 0; i < results.length(); i++) {
-                        JSONObject result = results.getJSONObject(i);
-                        articles.add(parseArticle(result));
-                    }
-
-                    return articles;
-                }
-            } catch (IOException | JSONException e) {
-                throw new RuntimeException("Error fetching articles by category", e);
-            }
-        });
-    }
-
-    @Override
-    public CompletableFuture<NewsArticle> getArticleDetails(String url) {
-        return CompletableFuture.supplyAsync(() -> {
-            try {
-                // Guardian API expects the path after the domain
-                String apiUrl = url.replace("https://www.theguardian.com", "https://content.guardianapis.com")
-                    + "?show-fields=bodyText,thumbnail"
-                    + "&api-key=" + apiKey;
-
-                Request request = new Request.Builder()
-                        .url(apiUrl)
-                        .build();
-
-                try (Response response = client.newCall(request).execute()) {
-                    if (!response.isSuccessful()) throw new IOException("Unexpected response " + response);
-
-                    String responseData = response.body().string();
-                    JSONObject json = new JSONObject(responseData);
-                    JSONObject content = json.getJSONObject("response").getJSONObject("content");
-
-                    return parseArticle(content);
-                }
-            } catch (IOException | JSONException e) {
-                throw new RuntimeException("Error fetching article details", e);
-            }
-        });
     }
 
     @Override
@@ -118,6 +56,34 @@ public class GuardianNewsService implements NewsService {
                 }
             } catch (IOException | JSONException e) {
                 throw new RuntimeException("Error searching articles", e);
+            }
+        });
+    }
+
+    @Override
+    public CompletableFuture<NewsArticle> getArticleDetails(String url) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                // Guardian API expects the path after the domain
+                String apiUrl = url.replace("https://www.theguardian.com", "https://content.guardianapis.com")
+                    + "?show-fields=bodyText,thumbnail"
+                    + "&api-key=" + apiKey;
+
+                Request request = new Request.Builder()
+                        .url(apiUrl)
+                        .build();
+
+                try (Response response = client.newCall(request).execute()) {
+                    if (!response.isSuccessful()) throw new IOException("Unexpected response " + response);
+
+                    String responseData = response.body().string();
+                    JSONObject json = new JSONObject(responseData);
+                    JSONObject content = json.getJSONObject("response").getJSONObject("content");
+
+                    return parseArticle(content);
+                }
+            } catch (IOException | JSONException e) {
+                throw new RuntimeException("Error fetching article details", e);
             }
         });
     }

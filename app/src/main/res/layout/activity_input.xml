@@ -87,88 +87,25 @@
                 app:layout_constraintTop_toTopOf="@+id/input_keyword"
                 app:backgroundTint="@color/purple_500" />
 
-            <HorizontalScrollView
-                android:id="@+id/category_scroll"
+            <TextView
+                android:id="@+id/label_sort_by"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Sort By:"
+                android:textColor="@color/purple_700"
+                android:textSize="16sp"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@+id/input_keyword" />
+
+            <Spinner
+                android:id="@+id/spinner_sort_by"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:scrollbars="none"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toBottomOf="@+id/input_keyword">
-
-                <com.google.android.material.chip.ChipGroup
-                    android:id="@+id/category_chip_group"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    app:chipSpacingHorizontal="8dp"
-                    app:singleSelection="true">
-
-                    <com.google.android.material.chip.Chip
-                        android:id="@+id/chip_technology"
-                        style="@style/Widget.MaterialComponents.Chip.Choice"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:textColor="@color/white"
-                        app:chipBackgroundColor="@color/color_technology"
-                        android:text="Technology" />
-
-                    <com.google.android.material.chip.Chip
-                        android:id="@+id/chip_politics"
-                        style="@style/Widget.MaterialComponents.Chip.Choice"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:textColor="@color/white"
-                        app:chipBackgroundColor="@color/color_politics"
-                        android:text="Politics" />
-
-                    <com.google.android.material.chip.Chip
-                        android:id="@+id/chip_health"
-                        style="@style/Widget.MaterialComponents.Chip.Choice"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:textColor="@color/white"
-                        app:chipBackgroundColor="@color/color_health"
-                        android:text="Health" />
-
-                    <com.google.android.material.chip.Chip
-                        android:id="@+id/chip_sports"
-                        style="@style/Widget.MaterialComponents.Chip.Choice"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:textColor="@color/white"
-                        app:chipBackgroundColor="@color/color_sports"
-                        android:text="Sports" />
-
-                    <com.google.android.material.chip.Chip
-                        android:id="@+id/chip_entertainment"
-                        style="@style/Widget.MaterialComponents.Chip.Choice"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:textColor="@color/white"
-                        app:chipBackgroundColor="@color/color_entertainment"
-                        android:text="Entertainment" />
-                </com.google.android.material.chip.ChipGroup>
-            </HorizontalScrollView>
-            <TextView
-                    android:id="@+id/label_sort_by"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="Sort By:"
-                    android:textColor="@color/purple_700"
-                    android:textSize="16sp"
-                    app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintTop_toBottomOf="@+id/category_scroll" />
-
-            <Spinner
-                    android:id="@+id/spinner_sort_by"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    app:layout_constraintEnd_toEndOf="parent"
-                    app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintTop_toBottomOf="@+id/label_sort_by" />
+                app:layout_constraintTop_toBottomOf="@+id/label_sort_by" />
 
         </androidx.constraintlayout.widget.ConstraintLayout>
     </com.google.android.material.card.MaterialCardView>
@@ -197,8 +134,7 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/search_card"
-        app:layout_constraintVertical_bias="0.3" />
+        app:layout_constraintTop_toBottomOf="@+id/search_card" />
 
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/news_recycler_view"
@@ -210,6 +146,6 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@+id/search_card"
-        tools:listitem="@layout/item_news_article" />
+        tools:listitem="@layout/item_news" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

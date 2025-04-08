@@ -3,7 +3,6 @@ package com.example.aipodcast.repository;
 import com.example.aipodcast.model.NewsArticle;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import com.example.aipodcast.model.NewsCategory;
 
 /**
  * Repository interface for accessing news data
@@ -15,8 +14,6 @@ public interface NewsRepository {
      * @return CompletableFuture with list of matching articles
      */
     CompletableFuture<List<NewsArticle>> searchArticles(String keyword);
-
-    CompletableFuture<List<NewsArticle>> searchArticles(String keyword, NewsCategory category);
     
     /**
      * Get article details by URL
