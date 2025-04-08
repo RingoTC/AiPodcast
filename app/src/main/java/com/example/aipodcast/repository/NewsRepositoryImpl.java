@@ -6,6 +6,7 @@ import android.util.Log;
 import com.example.aipodcast.database.dao.NewsDao;
 import com.example.aipodcast.database.dao.SqliteNewsDao;
 import com.example.aipodcast.model.NewsArticle;
+import com.example.aipodcast.model.NewsCategory;
 import com.example.aipodcast.service.NewsService;
 
 import java.util.List;
@@ -76,8 +77,12 @@ public class NewsRepositoryImpl implements NewsRepository {
         });
     }
 
+    @Override
+    public CompletableFuture<List<NewsArticle>> searchArticles(String keyword, NewsCategory category) {
+        return null;
+    }
 
-    
+
     /**
      * Get article details by URL
      * @param url The article URL
