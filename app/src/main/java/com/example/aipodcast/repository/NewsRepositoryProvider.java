@@ -2,7 +2,7 @@ package com.example.aipodcast.repository;
 
 import android.content.Context;
 
-import com.example.aipodcast.service.NYTimesNewsService;
+import com.example.aipodcast.service.GuardianNewsService;
 import com.example.aipodcast.service.NewsService;
 import com.example.aipodcast.service.NewsServiceWrapper;
 import com.example.aipodcast.BuildConfig;
@@ -23,7 +23,7 @@ public class NewsRepositoryProvider {
     public static synchronized NewsRepository getRepository(Context context) {
         if (sInstance == null) {
             // Create the base news service
-            NewsService baseNewsService = new NYTimesNewsService(BuildConfig.NYT_ARTICLE_API_KEY);
+            NewsService baseNewsService = new GuardianNewsService(BuildConfig.GUARDIAN_API_KEY);
             
             // Wrap it with caching functionality
             NewsService newsService = new NewsServiceWrapper(context.getApplicationContext(), baseNewsService);
