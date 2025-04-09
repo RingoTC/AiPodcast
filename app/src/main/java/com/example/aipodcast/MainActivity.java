@@ -2,36 +2,54 @@ package com.example.aipodcast;
 
 import android.app.ActivityOptions;
 import android.content.Intent;
+import android.content.res.ColorStateList;
 import android.os.Bundle;
 import android.util.Log;
 import android.util.Pair;
 import android.view.View;
-import android.view.animation.AnimationUtils;
 import android.widget.ImageView;
 import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
 
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.card.MaterialCardView;
+import com.google.android.material.chip.Chip;
+import com.google.android.material.chip.ChipGroup;
+import com.google.android.material.slider.Slider;
 import com.google.android.material.snackbar.Snackbar;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import android.graphics.Color;
 
 /**
  * Entry point activity of the application.
- * Provides a welcome screen and navigation to the news search functionality.
+ * Provides topic selection and actions for news podcast generation.
  */
 public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = "MainActivity";
+    private static final float DISABLED_ALPHA = 1.0f;
+    private static final int COLOR_PURPLE = 0xFF6200EE; // Primary purple color
+    private static final int COLOR_DISABLED_BG = 0xFFE0E0E0; // Light gray for disabled background
+    private static final float ENABLED_ALPHA = 1.0f;
     
+    // UI Elements
     private MaterialCardView logoCard;
     private ImageView logoImage;
     private TextView appTitle;
-    private TextView appSubtitle;
+    private ChipGroup topicChips;
+    private MaterialButton generatePodcastButton;
     private MaterialButton browseNewsButton;
     private TextView creditsText;
+    private Slider commuteTimeSlider;
+    private TextView commuteTimeValue;
+
+    // State
+    private List<String> selectedTopics = new ArrayList<>();
+    private int commuteDuration = 30; // Default duration in minutes
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -45,138 +63,205 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
 
         // Initialize views
-        logoCard = findViewById(R.id.logo_card);
-        logoImage = findViewById(R.id.logo_image);
-        appTitle = findViewById(R.id.app_title);
-        appSubtitle = findViewById(R.id.app_subtitle);
-        browseNewsButton = findViewById(R.id.start_button);
-        creditsText = findViewById(R.id.credits_text);
-
-        // Setup click listeners
-        setupClickListeners();
+        initializeViews();
+        
+        // Setup UI interactions
+        setupUI();
         
         // Apply animations
         animateUI();
+        updateButtonsState();
     }
     
     /**
-     * Set up click listeners for interactive elements
+     * Initialize view references
      */
-    private void setupClickListeners() {
-        browseNewsButton.setOnClickListener(v -> navigateToNewsSearch());
+    private void initializeViews() {
+        logoCard = findViewById(R.id.logo_card);
+        logoImage = findViewById(R.id.logo_image);
+        appTitle = findViewById(R.id.app_title);
+        topicChips = findViewById(R.id.topic_chips);
+        generatePodcastButton = findViewById(R.id.generate_podcast_button);
+        browseNewsButton = findViewById(R.id.browse_news_button);
+        creditsText = findViewById(R.id.credits_text);
+        commuteTimeSlider = findViewById(R.id.commute_time_slider);
+        commuteTimeValue = findViewById(R.id.commute_time_value);
         
-        // Add a long click listener to show app info
-        browseNewsButton.setOnLongClickListener(v -> {
-            showAppInfo();
-            return true;
+        setupCommuteTimeSlider();
+    }
+    
+    /**
+     * Set up UI elements and their listeners
+     */
+    private void setupUI() {
+        // Setup Chips
+        setupTopicChips();
+        
+        // Setup action buttons
+        setupActionButtons();
+    }
+
+    /**
+     * Setup topic selection chips
+     */
+    private void setupTopicChips() {
+        topicChips.setOnCheckedStateChangeListener((group, checkedIds) -> {
+            selectedTopics.clear();
+            for (int id : checkedIds) {
+                Chip chip = group.findViewById(id);
+                if (chip != null) {
+                    selectedTopics.add(chip.getText().toString());
+                }
+            }
+            updateButtonsState();
         });
     }
-    
+
     /**
-     * Apply entrance animations to UI elements
+     * Setup action buttons
+     */
+    private void setupActionButtons() {
+        generatePodcastButton.setOnClickListener(v -> handleGenerate());
+        browseNewsButton.setOnClickListener(v -> navigateToNewsSearch());
+        
+        // Initially disable buttons
+        updateButtonsState();
+    }
+
+    /**
+     * Update buttons state based on topic selection
+     */
+    private void updateButtonsState() {
+        boolean hasTopicsSelected = !selectedTopics.isEmpty();
+        
+        // Update generate podcast button
+        generatePodcastButton.setEnabled(hasTopicsSelected);
+        generatePodcastButton.setAlpha(ENABLED_ALPHA);
+        if (!hasTopicsSelected) {
+            generatePodcastButton.setBackgroundColor(COLOR_DISABLED_BG);
+            generatePodcastButton.setTextColor(0xFF666666);
+        } else {
+            generatePodcastButton.setBackgroundColor(COLOR_PURPLE);
+            generatePodcastButton.setTextColor(getResources().getColor(android.R.color.white));
+        }
+        
+        // Update browse news button
+        browseNewsButton.setEnabled(hasTopicsSelected);
+        browseNewsButton.setAlpha(ENABLED_ALPHA);
+        if (!hasTopicsSelected) {
+            browseNewsButton.setBackgroundColor(COLOR_DISABLED_BG);
+            browseNewsButton.setTextColor(0xFF666666);
+            browseNewsButton.setStrokeColor(ColorStateList.valueOf(COLOR_DISABLED_BG));
+        } else {
+            browseNewsButton.setBackgroundColor(getResources().getColor(android.R.color.white));
+            browseNewsButton.setTextColor(COLOR_PURPLE);
+            browseNewsButton.setStrokeColor(ColorStateList.valueOf(COLOR_PURPLE));
+        }
+    }
+
+    /**
+     * Handle generate button click
+     */
+    private void handleGenerate() {
+        if (selectedTopics.isEmpty()) {
+            showTopicSelectionError();
+            return;
+        }
+        
+        String message = String.format("Generating podcast for topics: %s", 
+                String.join(", ", selectedTopics));
+        Snackbar.make(generatePodcastButton, message, Snackbar.LENGTH_LONG).show();
+    }
+
+    /**
+     * Navigate to news search screen
+     */
+    private void navigateToNewsSearch() {
+        if (selectedTopics.isEmpty()) {
+            showTopicSelectionError();
+            return;
+        }
+
+        try {
+            Intent intent = new Intent(this, InputActivity.class);
+            intent.putStringArrayListExtra("selected_topics", new ArrayList<>(selectedTopics));
+            intent.putExtra("duration", commuteDuration); // Pass the selected duration
+            
+            // Create transition animation
+            Pair<View, String> p1 = Pair.create(logoCard, "app_logo_transition");
+            ActivityOptions options = ActivityOptions.makeSceneTransitionAnimation(this, p1);
+            
+            startActivity(intent, options.toBundle());
+        } catch (Exception e) {
+            Log.e(TAG, "Error navigating to InputActivity: " + e.getMessage());
+            Snackbar.make(generatePodcastButton, 
+                    "Error opening search screen. Please try again.", 
+                    Snackbar.LENGTH_LONG).show();
+        }
+    }
+
+    /**
+     * Show topic selection error message
+     */
+    private void showTopicSelectionError() {
+        Snackbar.make(generatePodcastButton, 
+                "Please select at least one topic", 
+                Snackbar.LENGTH_LONG).show();
+    }
+
+    /**
+     * Animate UI elements
      */
     private void animateUI() {
-        // Prepare animations
-        logoCard.setScaleX(0f);
-        logoCard.setScaleY(0f);
-        logoCard.setAlpha(0f);
+        float startY = 100f;
+        float startAlpha = 0f;
+        int duration = 1000;
         
-        appTitle.setTranslationY(50f);
-        appTitle.setAlpha(0f);
-        
-        appSubtitle.setTranslationY(50f);
-        appSubtitle.setAlpha(0f);
-        
-        browseNewsButton.setScaleX(0f);
-        browseNewsButton.setScaleY(0f);
-        
-        creditsText.setAlpha(0f);
-        
-        // Animate logo
+        logoCard.setTranslationY(startY);
+        logoCard.setAlpha(startAlpha);
         logoCard.animate()
-                .scaleX(1f)
-                .scaleY(1f)
+                .translationY(0f)
                 .alpha(1f)
-                .setDuration(400)
+                .setDuration(duration)
                 .start();
-        
-        // Animate title with delay
+
+        appTitle.setTranslationY(startY);
+        appTitle.setAlpha(startAlpha);
         appTitle.animate()
                 .translationY(0f)
                 .alpha(1f)
-                .setStartDelay(200)
-                .setDuration(400)
+                .setDuration(duration)
+                .setStartDelay(300)
                 .start();
-        
-        // Animate subtitle with delay
-        appSubtitle.animate()
+
+        topicChips.setTranslationY(startY);
+        topicChips.setAlpha(startAlpha);
+        topicChips.animate()
                 .translationY(0f)
                 .alpha(1f)
-                .setStartDelay(300)
-                .setDuration(400)
-                .start();
-        
-        // Animate button with delay
-        browseNewsButton.animate()
-                .scaleX(1f)
-                .scaleY(1f)
-                .setStartDelay(400)
-                .setDuration(400)
-                .start();
-        
-        // Fade in credits
-        creditsText.animate()
-                .alpha(1f)
-                .setStartDelay(500)
-                .setDuration(400)
+                .setDuration(duration)
+                .setStartDelay(600)
                 .start();
     }
-    
-    /**
-     * Navigate to the news search screen with transition animation
-     */
-    private void navigateToNewsSearch() {
-        Intent intent = new Intent(MainActivity.this, InputActivity.class);
+
+    private void setupCommuteTimeSlider() {
+        commuteTimeSlider.addOnChangeListener((slider, value, fromUser) -> {
+            commuteDuration = (int) value;
+            updateCommuteTimeText();
+        });
         
-        // Only use logo for shared element transition for better performance
-        Pair<View, String> logoPair = Pair.create(logoCard, "app_logo_transition");
-        
-        ActivityOptions options = ActivityOptions.makeSceneTransitionAnimation(
-                this, logoPair);
-        
-        try {
-            startActivity(intent, options.toBundle());
-            overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
-        } catch (Exception e) {
-            // Fallback if transition fails
-            Log.e(TAG, "Error during transition: " + e.getMessage());
-            startActivity(intent);
-        }
+        // Set initial value
+        updateCommuteTimeText();
     }
-    
-    /**
-     * Show application information
-     */
-    private void showAppInfo() {
-        Snackbar.make(browseNewsButton, 
-                "AI Podcast News - Powered by NY Times API", 
-                Snackbar.LENGTH_LONG)
-                .setAction("About", v -> {
-                    // TODO: Add about screen navigation
-                    Snackbar.make(browseNewsButton, 
-                            "Version 1.0 - Group 1 Project", 
-                            Snackbar.LENGTH_SHORT).show();
-                })
-                .show();
+
+    private void updateCommuteTimeText() {
+        commuteTimeValue.setText(String.format("%d minutes", commuteDuration));
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        // Reset animations if needed
-        if (logoCard != null && logoCard.getScaleX() == 0f) {
-            animateUI();
-        }
+        updateButtonsState();
     }
 }
 

@@ -1,7 +1,11 @@
 package com.example.aipodcast;
 
+import android.content.Context;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
 import android.net.Uri;
 import android.os.Bundle;
+import android.text.TextUtils;
 import android.util.Log;
 import android.view.MenuItem;
 import android.view.View;
@@ -26,6 +30,8 @@ import com.example.aipodcast.model.NewsArticle;
 import com.example.aipodcast.repository.NewsRepository;
 import com.example.aipodcast.repository.NewsRepositoryProvider;
 import com.google.android.material.card.MaterialCardView;
+import com.google.android.material.chip.Chip;
+import com.google.android.material.chip.ChipGroup;
 import com.google.android.material.snackbar.Snackbar;
 
 import java.net.UnknownHostException;
@@ -45,19 +51,21 @@ public class InputActivity extends AppCompatActivity {
     private MaterialCardView logoContainer;
     private ImageView logoSmall;
     private TextView searchTitle;
-    private EditText keywordInput;
+    private ChipGroup selectedTopicsChipGroup;
     private ProgressBar progressBar;
     private RecyclerView newsRecyclerView;
     private TextView emptyStateView;
-    private Button submitButton;
     private MaterialCardView searchCard;
-    private Spinner sortBySpinner;
 
     // Data
     private NewsAdapter newsAdapter;
     private NewsRepository newsRepository;
     private List<NewsArticle> currentArticles = new ArrayList<>();
-    private String selectedSortBy = "relevancy";
+    private ArrayList<String> selectedTopics;
+    private int duration;
+
+    // Network
+    private ConnectivityManager connectivityManager;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -73,20 +81,35 @@ public class InputActivity extends AppCompatActivity {
 
         setContentView(R.layout.activity_input);
 
-        // Initialize repository
+        // Get selected topics from intent
+        selectedTopics = getIntent().getStringArrayListExtra("selected_topics");
+        duration = getIntent().getIntExtra("duration", 5);
+
+        // Initialize repository and connectivity manager
         newsRepository = NewsRepositoryProvider.getRepository(this);
+        connectivityManager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
 
         // Initialize UI components
         initializeViews();
         setupRecyclerView();
         setupListeners();
-        setupSortBySpinner();
+        setupSelectedTopics();
 
         // Apply animations
         animateUI();
 
         // Complete transition
         supportStartPostponedEnterTransition();
+
+        // Automatically search for the first topic
+        if (selectedTopics != null && !selectedTopics.isEmpty()) {
+            if (isNetworkAvailable()) {
+                performSearch(selectedTopics.get(0));
+            } else {
+                showError("No internet connection. Please check your network settings and try again.");
+                showEmptyState("No internet connection");
+            }
+        }
     }
 
     /**
@@ -96,13 +119,14 @@ public class InputActivity extends AppCompatActivity {
         logoContainer = findViewById(R.id.logo_container);
         logoSmall = findViewById(R.id.logo_small);
         searchTitle = findViewById(R.id.search_title);
-        keywordInput = findViewById(R.id.input_keyword);
+        selectedTopicsChipGroup = findViewById(R.id.selected_topics_chip_group);
         progressBar = findViewById(R.id.progress_bar);
         newsRecyclerView = findViewById(R.id.news_recycler_view);
         emptyStateView = findViewById(R.id.empty_state_view);
-        submitButton = findViewById(R.id.btn_submit);
         searchCard = findViewById(R.id.search_card);
-        sortBySpinner = findViewById(R.id.spinner_sort_by);
+
+        // Update search title to show duration
+        searchTitle.setText(String.format("News for %d minute podcast", duration));
     }
 
     /**
@@ -141,52 +165,26 @@ public class InputActivity extends AppCompatActivity {
     }
 
     /**
-     * Setup sort by spinner
-     */
-    private void setupSortBySpinner() {
-        List<String> sortOptions = new ArrayList<>();
-        sortOptions.add("Relevance");
-        sortOptions.add("Newest");
-
-        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, sortOptions);
-        sortBySpinner.setAdapter(adapter);
-
-        sortBySpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override
-            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                String selectedOption = parent.getItemAtPosition(position).toString();
-                switch (selectedOption) {
-                    case "Relevance":
-                        selectedSortBy = "relevancy";
-                        break;
-                    case "Newest":
-                        selectedSortBy = "publishedAt";
-                        break;
-                }
-                Log.d(TAG, "Selected sort by: " + selectedSortBy);
-            }
-
-            @Override
-            public void onNothingSelected(AdapterView<?> parent) {
-                selectedSortBy = "relevancy";
-            }
-        });
-    }
-
-    /**
      * Setup click listeners for interactive elements
      */
     private void setupListeners() {
         // Back navigation
         logoContainer.setOnClickListener(v -> finishAfterTransition());
+    }
 
-        submitButton.setOnClickListener(v -> performSearch());
-
-        // Add keyboard search action
-        keywordInput.setOnEditorActionListener((v, actionId, event) -> {
-            performSearch();
-            return true;
-        });
+    /**
+     * Setup selected topics chips
+     */
+    private void setupSelectedTopics() {
+        if (selectedTopics != null) {
+            for (String topic : selectedTopics) {
+                Chip chip = new Chip(this);
+                chip.setText(topic);
+                chip.setClickable(false);
+                chip.setCheckable(false);
+                selectedTopicsChipGroup.addView(chip);
+            }
+        }
     }
 
     /**
@@ -208,122 +206,91 @@ public class InputActivity extends AppCompatActivity {
     }
 
     /**
-     * Perform the news search based on user input
+     * Check if network is available
      */
-    private void performSearch() {
-        String keyword = keywordInput.getText().toString().trim();
-        if (keyword.isEmpty()) {
-            showError("Please enter a search keyword");
+    private boolean isNetworkAvailable() {
+        if (connectivityManager == null) return false;
+        
+        NetworkInfo activeNetwork = connectivityManager.getActiveNetworkInfo();
+        return activeNetwork != null && activeNetwork.isConnectedOrConnecting();
+    }
+
+    /**
+     * Perform the news search
+     */
+    private void performSearch(String keyword) {
+        if (!isNetworkAvailable()) {
+            showError("No internet connection. Please check your network settings and try again.");
+            showEmptyState("No internet connection");
             return;
         }
 
         setLoadingState(true);
-        Log.d(TAG, "Searching for keyword: " + keyword + " sorted by: " + selectedSortBy);
+        Log.d(TAG, "Searching for keyword: " + keyword);
 
-        CompletableFuture<List<NewsArticle>> future = newsRepository.searchArticles(keyword);
+        try {
+            CompletableFuture<List<NewsArticle>> future = newsRepository.searchArticles(keyword);
 
-        future.thenAccept(articles -> runOnUiThread(() -> {
-            setLoadingState(false);
-
-            List<NewsArticle> sortedArticles = new ArrayList<>(articles);
-            if (selectedSortBy.equals("publishedAt")) {
-                sortedArticles.sort((a1, a2) -> {
-                    if (a1.getPublishedDate() == null || a2.getPublishedDate() == null) {
-                        return 0;
-                    }
-                    return a2.getPublishedDate().compareTo(a1.getPublishedDate());
-                });
-            }
-
-            if (sortedArticles.isEmpty()) {
-                showEmptyState("No news found matching your criteria");
-            } else {
-                showResults(sortedArticles);
-            }
-        })).exceptionally(e -> {
-            runOnUiThread(() -> {
+            future.thenAccept(articles -> runOnUiThread(() -> {
                 setLoadingState(false);
-                Throwable cause = e.getCause();
-                if (cause instanceof UnknownHostException) {
-                    showError("Network error. Please check your connection");
+                if (articles != null && !articles.isEmpty()) {
+                    showResults(articles);
                 } else {
-                    showError("Error: " + e.getMessage());
+                    showEmptyState("No articles found for: " + keyword);
                 }
-                Log.e(TAG, "Search error", e);
+            })).exceptionally(e -> {
+                Log.e(TAG, "Error searching articles: " + e.getMessage(), e);
+                runOnUiThread(() -> {
+                    setLoadingState(false);
+                    String errorMsg;
+                    if (e.getCause() instanceof UnknownHostException) {
+                        errorMsg = "Unable to connect to news server. Please check your internet connection and try again.";
+                    } else {
+                        errorMsg = "Error loading news. Please try again later.";
+                    }
+                    showError(errorMsg);
+                    showEmptyState("Connection error");
+                });
+                return null;
             });
-            return null;
-        });
+        } catch (Exception e) {
+            Log.e(TAG, "Error initializing search: " + e.getMessage(), e);
+            setLoadingState(false);
+            showError("Unable to initialize search. Please try again.");
+            showEmptyState("Error occurred");
+        }
     }
 
-    /**
-     * Display search results in the RecyclerView
-     */
+    private void setLoadingState(boolean isLoading) {
+        progressBar.setVisibility(isLoading ? View.VISIBLE : View.GONE);
+        emptyStateView.setVisibility(isLoading ? View.GONE : View.VISIBLE);
+        newsRecyclerView.setVisibility(isLoading ? View.GONE : View.VISIBLE);
+    }
+
     private void showResults(List<NewsArticle> articles) {
-        emptyStateView.setVisibility(View.GONE);
-        newsRecyclerView.setVisibility(View.VISIBLE);
-
-        // Add animation for results
-        newsRecyclerView.setAlpha(0f);
-        newsRecyclerView.animate()
-                .alpha(1f)
-                .setDuration(300)
-                .start();
-
         currentArticles.clear();
         currentArticles.addAll(articles);
         newsAdapter.notifyDataSetChanged();
-
-        // Scroll to top
-        if (!articles.isEmpty()) {
-            newsRecyclerView.smoothScrollToPosition(0);
-        }
+        emptyStateView.setVisibility(View.GONE);
+        newsRecyclerView.setVisibility(View.VISIBLE);
     }
 
-    /**
-     * Show empty state with custom message
-     */
     private void showEmptyState(String message) {
-        newsRecyclerView.setVisibility(View.GONE);
-        emptyStateView.setVisibility(View.VISIBLE);
+        currentArticles.clear();
+        newsAdapter.notifyDataSetChanged();
         emptyStateView.setText(message);
-
-        // Fade in animation
-        emptyStateView.setAlpha(0f);
-        emptyStateView.animate()
-                .alpha(1f)
-                .setDuration(300)
-                .start();
+        emptyStateView.setVisibility(View.VISIBLE);
+        newsRecyclerView.setVisibility(View.GONE);
     }
 
-    /**
-     * Show error message to user
-     */
     private void showError(String message) {
-        Snackbar.make(keywordInput, message, Snackbar.LENGTH_LONG)
-                .setBackgroundTint(getResources().getColor(R.color.purple_700, getTheme()))
-                .setTextColor(getResources().getColor(R.color.white, getTheme()))
-                .show();
-    }
-
-    /**
-     * Toggle loading state UI elements
-     */
-    private void setLoadingState(boolean isLoading) {
-        progressBar.setVisibility(isLoading ? View.VISIBLE : View.GONE);
-        submitButton.setEnabled(!isLoading);
-        keywordInput.setEnabled(!isLoading);
-        sortBySpinner.setEnabled(!isLoading);
-
-        // Add animation for progress bar
-        if (isLoading) {
-            progressBar.setScaleX(0f);
-            progressBar.setScaleY(0f);
-            progressBar.animate()
-                    .scaleX(1f)
-                    .scaleY(1f)
-                    .setDuration(300)
-                    .start();
-        }
+        Snackbar snackbar = Snackbar.make(searchCard, message, Snackbar.LENGTH_LONG);
+        snackbar.setAction("Retry", v -> {
+            if (selectedTopics != null && !selectedTopics.isEmpty()) {
+                performSearch(selectedTopics.get(0));
+            }
+        });
+        snackbar.show();
     }
 
     @Override

@@ -40,10 +40,24 @@ public class GuardianNewsService implements NewsService {
                         .build();
 
                 try (Response response = client.newCall(request).execute()) {
-                    if (!response.isSuccessful()) throw new IOException("Unexpected response " + response);
+                    if (!response.isSuccessful()) {
+                        String errorBody = response.body() != null ? response.body().string() : "No error body";
+                        throw new IOException("API request failed with code " + response.code() 
+                            + ", message: " + response.message()
+                            + ", error body: " + errorBody);
+                    }
 
                     String responseData = response.body().string();
                     JSONObject json = new JSONObject(responseData);
+                    
+                    // Check for API error response
+                    if (json.has("response") && json.getJSONObject("response").has("status")) {
+                        String status = json.getJSONObject("response").getString("status");
+                        if (!"ok".equals(status)) {
+                            throw new IOException("API returned error status: " + status);
+                        }
+                    }
+                    
                     JSONArray results = json.getJSONObject("response").getJSONArray("results");
 
                     List<NewsArticle> articles = new ArrayList<>();
@@ -55,7 +69,7 @@ public class GuardianNewsService implements NewsService {
                     return articles;
                 }
             } catch (IOException | JSONException e) {
-                throw new RuntimeException("Error searching articles", e);
+                throw new RuntimeException("Error searching articles: " + e.getMessage(), e);
             }
         });
     }

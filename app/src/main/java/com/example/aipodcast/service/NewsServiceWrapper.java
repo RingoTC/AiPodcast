@@ -7,6 +7,7 @@ import com.example.aipodcast.database.dao.NewsDao;
 import com.example.aipodcast.database.dao.SqliteNewsDao;
 import com.example.aipodcast.model.NewsArticle;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
@@ -48,17 +49,28 @@ public class NewsServiceWrapper implements NewsService {
                     newsDao.insertArticles(articles, keyword);
                 }
                 return articles;
-            }, dbExecutor);
+            }, dbExecutor)
+            .exceptionally(e -> {
+                Log.e(TAG, "Network error while searching articles: " + e.getMessage(), e);
+                // Return null to indicate network error, will fallback to cache
+                return null;
+            });
             
         // Combine results from both sources
         return cachedResults.thenCombine(networkResults, (cached, network) -> {
             if (network != null && !network.isEmpty()) {
+                Log.d(TAG, "Using network results for keyword: " + keyword);
                 return network; // Prefer network results if available
             }
-            return cached; // Fall back to cached results
+            if (cached != null && !cached.isEmpty()) {
+                Log.d(TAG, "Using cached results for keyword: " + keyword);
+                return cached; // Fall back to cached results
+            }
+            Log.w(TAG, "No results found (network or cache) for keyword: " + keyword);
+            return new ArrayList<NewsArticle>(); // Return empty list if no results found
         }).exceptionally(e -> {
-            Log.e(TAG, "Error searching articles: " + e.getMessage());
-            return null;
+            Log.e(TAG, "Error searching articles: " + e.getMessage(), e);
+            return new ArrayList<NewsArticle>(); // Return empty list on error
         });
     }
     
