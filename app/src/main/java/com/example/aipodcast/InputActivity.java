@@ -16,6 +16,7 @@ import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.Spinner;
 import android.widget.ProgressBar;
+import android.widget.RadioGroup;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -29,6 +30,8 @@ import com.example.aipodcast.adapter.NewsAdapter;
 import com.example.aipodcast.model.NewsArticle;
 import com.example.aipodcast.repository.NewsRepository;
 import com.example.aipodcast.repository.NewsRepositoryProvider;
+import com.example.aipodcast.service.TextToSpeechHelper;
+import com.google.android.material.button.MaterialButton;
 import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.chip.Chip;
 import com.google.android.material.chip.ChipGroup;
@@ -56,6 +59,9 @@ public class InputActivity extends AppCompatActivity {
     private RecyclerView newsRecyclerView;
     private TextView emptyStateView;
     private MaterialCardView searchCard;
+    private TextView timeLabel;
+    private int selectedTime = 0;
+    private TextToSpeechHelper ttsHelper;
 
     // Data
     private NewsAdapter newsAdapter;
@@ -306,12 +312,16 @@ public class InputActivity extends AppCompatActivity {
     @Override
     public void onBackPressed() {
         // Handle back button with proper transition
+        super.onBackPressed();
         finishAfterTransition();
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        if (ttsHelper != null) {
+            ttsHelper.shutdown();
+        }
         // Clean up resources if needed
     }
 }
