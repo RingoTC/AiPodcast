@@ -13,13 +13,14 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     private static final String TAG = "DatabaseHelper";
     
     // Database Version
-    private static final int DATABASE_VERSION = 2;
+    private static final int DATABASE_VERSION = 3;
     
     // Database Name
     private static final String DATABASE_NAME = "news_db";
     
     // Table Names
     public static final String TABLE_NEWS = "news_articles";
+    public static final String TABLE_USERS = "users";
     
     // Common column names
     public static final String COLUMN_ID = "id";
@@ -33,6 +34,11 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COLUMN_SECTION = "section";
     public static final String COLUMN_PUBLISHED_DATE = "published_date";
     public static final String COLUMN_KEYWORD = "keyword";
+    
+    // USER Table - column names
+    public static final String COLUMN_USERNAME = "username";
+    public static final String COLUMN_PASSWORD = "password";
+    public static final String COLUMN_EMAIL = "email";
     
     // Create Table Statements
     // News table create statement
@@ -51,6 +57,15 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     // Create Index for keyword search
     private static final String CREATE_INDEX_KEYWORDS = "CREATE INDEX idx_keywords ON " 
             + TABLE_NEWS + "(" + COLUMN_KEYWORD + ")";
+            
+    // Users table create statement
+    private static final String CREATE_TABLE_USERS = "CREATE TABLE " + TABLE_USERS + "("
+            + COLUMN_ID + " INTEGER PRIMARY KEY AUTOINCREMENT,"
+            + COLUMN_USERNAME + " TEXT UNIQUE NOT NULL,"
+            + COLUMN_PASSWORD + " TEXT NOT NULL,"
+            + COLUMN_EMAIL + " TEXT UNIQUE NOT NULL,"
+            + COLUMN_CREATED_AT + " DATETIME DEFAULT CURRENT_TIMESTAMP"
+            + ")";
     
     // Singleton instance
     private static DatabaseHelper sInstance;
@@ -81,6 +96,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         // Creating required tables and indexes
         db.execSQL(CREATE_TABLE_NEWS);
         db.execSQL(CREATE_INDEX_KEYWORDS);
+        db.execSQL(CREATE_TABLE_USERS);
         Log.i(TAG, "Database tables and indexes created");
     }
     
@@ -92,6 +108,11 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             // Add keyword column and index
             db.execSQL("ALTER TABLE " + TABLE_NEWS + " ADD COLUMN " + COLUMN_KEYWORD + " TEXT");
             db.execSQL(CREATE_INDEX_KEYWORDS);
+        }
+        
+        if (oldVersion < 3) {
+            // Create users table
+            db.execSQL(CREATE_TABLE_USERS);
         }
     }
     
@@ -111,6 +132,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public void resetDatabase() {
         SQLiteDatabase db = getWritableDatabase();
         db.execSQL("DROP TABLE IF EXISTS " + TABLE_NEWS);
+        db.execSQL("DROP TABLE IF EXISTS " + TABLE_USERS);
         onCreate(db);
     }
-} 
+}

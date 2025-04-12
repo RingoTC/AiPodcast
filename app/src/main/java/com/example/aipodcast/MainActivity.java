@@ -6,11 +6,16 @@ import android.content.res.ColorStateList;
 import android.os.Bundle;
 import android.util.Log;
 import android.util.Pair;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.view.View;
 import android.widget.ImageView;
 import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
+
+import com.example.aipodcast.activity.LoginActivity;
+import com.example.aipodcast.service.AuthService;
 
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.card.MaterialCardView;
@@ -31,6 +36,7 @@ import android.graphics.Color;
 public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = "MainActivity";
+    private AuthService authService;
     private static final float DISABLED_ALPHA = 1.0f;
     private static final int COLOR_PURPLE = 0xFF6200EE; // Primary purple color
     private static final int COLOR_DISABLED_BG = 0xFFE0E0E0; // Light gray for disabled background
@@ -54,10 +60,15 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        
-        // Hide action bar to keep full-screen welcome design
-        if (getSupportActionBar() != null) {
-            getSupportActionBar().hide();
+
+        // Initialize AuthService
+        authService = AuthService.getInstance(this);
+
+        // Check if user is logged in
+        if (!authService.isLoggedIn()) {
+            startActivity(new Intent(this, LoginActivity.class));
+            finish();
+            return;
         }
         
         setContentView(R.layout.activity_main);
@@ -259,9 +270,35 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        getMenuInflater().inflate(R.menu.main_menu, menu);
+        return true;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        if (item.getItemId() == R.id.action_logout) {
+            handleLogout();
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
+    }
+
+    private void handleLogout() {
+        authService.logout();
+        startActivity(new Intent(this, LoginActivity.class));
+        finish();
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
+        // Check if user is still logged in
+        if (!authService.isLoggedIn()) {
+            startActivity(new Intent(this, LoginActivity.class));
+            finish();
+            return;
+        }
         updateButtonsState();
     }
 }
-
