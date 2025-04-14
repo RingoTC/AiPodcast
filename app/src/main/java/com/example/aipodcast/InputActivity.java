@@ -76,6 +76,8 @@ public class InputActivity extends AppCompatActivity {
     private List<NewsArticle> currentArticles = new ArrayList<>();
     private ArrayList<String> selectedTopics;
     private int duration;
+    private int commuteDuration;
+    private boolean useAIGeneration = true; // Default to true
 
     // Network
     private ConnectivityManager connectivityManager;
@@ -100,6 +102,9 @@ public class InputActivity extends AppCompatActivity {
         
         // Check if we're in podcast mode
         isPodcastMode = getIntent().getBooleanExtra("podcast_mode", false);
+        
+        // Get AI generation flag
+        useAIGeneration = getIntent().getBooleanExtra("use_ai_generation", true);
 
         // Initialize repository and connectivity manager
         newsRepository = NewsRepositoryProvider.getRepository(this);
@@ -222,6 +227,7 @@ public class InputActivity extends AppCompatActivity {
             Intent intent = new Intent(this, PodcastPlayerActivity.class);
             intent.putStringArrayListExtra("selected_topics", selectedTopics);
             intent.putExtra("duration", duration);
+            intent.putExtra("use_ai_generation", useAIGeneration);
             
             // 修改：使用ArrayList，不尝试直接传递Set
             ArrayList<NewsArticle> articlesList = new ArrayList<>(selectedArticles);

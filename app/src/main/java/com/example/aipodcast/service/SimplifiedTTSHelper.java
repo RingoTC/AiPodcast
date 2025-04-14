@@ -1,0 +1,344 @@
+package com.example.aipodcast.service;
+
+import android.content.Context;
+import android.media.MediaPlayer;
+import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
+import android.speech.tts.TextToSpeech;
+import android.util.Log;
+
+import com.example.aipodcast.model.PodcastContent;
+import com.example.aipodcast.model.PodcastSegment;
+
+import java.io.File;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.CompletableFuture;
+
+/**
+ * Simplified Text-To-Speech helper that provides basic TTS functionality
+ * for generating and playing podcast content.
+ */
+public class SimplifiedTTSHelper {
+    private static final String TAG = "SimplifiedTTSHelper";
+    
+    // TTS Engine
+    private TextToSpeech tts;
+    private boolean isInitialized = false;
+    private Context context;
+    
+    // Media Player
+    private MediaPlayer mediaPlayer;
+    
+    // Data
+    private List<PodcastSegment> segments;
+    private int currentSegmentIndex = 0;
+    
+    // Progress tracking
+    private Handler handler = new Handler(Looper.getMainLooper());
+    private ProgressCallback progressCallback;
+    
+    /**
+     * Callback interface for progress updates
+     */
+    public interface ProgressCallback {
+        void onProgress(int currentPosition, int totalDuration, int segmentIndex);
+        void onComplete();
+        void onError(String message);
+    }
+    
+    /**
+     * Constructor
+     * 
+     * @param context Application context
+     */
+    public SimplifiedTTSHelper(Context context) {
+        this.context = context;
+        
+        // Initialize TTS engine
+        tts = new TextToSpeech(context, status -> {
+            if (status == TextToSpeech.SUCCESS) {
+                int result = tts.setLanguage(Locale.US);
+                isInitialized = result != TextToSpeech.LANG_MISSING_DATA &&
+                               result != TextToSpeech.LANG_NOT_SUPPORTED;
+                
+                if (isInitialized) {
+                    // Optimize speech parameters
+                    tts.setSpeechRate(0.9f);
+                    tts.setPitch(1.0f);
+                    Log.d(TAG, "TTS initialized successfully");
+                } else {
+                    Log.e(TAG, "Language not supported");
+                }
+            } else {
+                Log.e(TAG, "TTS initialization failed with status: " + status);
+            }
+        });
+    }
+    
+    /**
+     * Set progress callback
+     * 
+     * @param callback Callback for progress updates
+     */
+    public void setProgressCallback(ProgressCallback callback) {
+        this.progressCallback = callback;
+    }
+    
+    /**
+     * Speak text directly
+     * 
+     * @param text Text to speak
+     * @return True if successful
+     */
+    public boolean speak(String text) {
+        if (!isInitialized) {
+            Log.e(TAG, "TTS not initialized");
+            return false;
+        }
+        
+        if (text == null || text.isEmpty()) {
+            Log.e(TAG, "Empty text provided");
+            return false;
+        }
+        
+        // Stop any current playback
+        stop();
+        
+        // Speak the text
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "UTTERANCE_ID");
+        } else {
+            HashMap<String, String> params = new HashMap<>();
+            params.put(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "UTTERANCE_ID");
+            tts.speak(text, TextToSpeech.QUEUE_FLUSH, params);
+        }
+        
+        return true;
+    }
+    
+    /**
+     * Speak podcast content
+     * 
+     * @param content Podcast content to speak
+     * @return True if successful
+     */
+    public boolean speakPodcast(PodcastContent content) {
+        if (!isInitialized || content == null) {
+            return false;
+        }
+        
+        this.segments = content.getSegments();
+        if (segments.isEmpty()) {
+            return false;
+        }
+        
+        // Speak the full content
+        return speak(content.getFullText());
+    }
+    
+    /**
+     * Play audio file
+     * 
+     * @param audioFile Audio file to play
+     * @return True if successful
+     */
+    public boolean playAudio(File audioFile) {
+        if (audioFile == null || !audioFile.exists()) {
+            Log.e(TAG, "Audio file is null or does not exist");
+            return false;
+        }
+        
+        stop();
+        
+        try {
+            mediaPlayer = new MediaPlayer();
+            mediaPlayer.setDataSource(audioFile.getAbsolutePath());
+            mediaPlayer.prepare();
+            
+            // Set completion listener
+            mediaPlayer.setOnCompletionListener(mp -> {
+                if (progressCallback != null) {
+                    progressCallback.onComplete();
+                }
+            });
+            
+            // Start playback
+            mediaPlayer.start();
+            
+            // Start progress updates
+            startProgressUpdates();
+            
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "Error playing audio: " + e.getMessage());
+            if (progressCallback != null) {
+                progressCallback.onError("Error playing audio: " + e.getMessage());
+            }
+            return false;
+        }
+    }
+    
+    /**
+     * Start progress updates
+     */
+    private void startProgressUpdates() {
+        if (mediaPlayer == null) return;
+        
+        handler.post(new Runnable() {
+            @Override
+            public void run() {
+                if (mediaPlayer != null && mediaPlayer.isPlaying()) {
+                    int currentPosition = mediaPlayer.getCurrentPosition();
+                    int totalDuration = mediaPlayer.getDuration();
+                    int segmentIndex = estimateCurrentSegment(currentPosition, totalDuration);
+                    
+                    if (progressCallback != null) {
+                        progressCallback.onProgress(currentPosition, totalDuration, segmentIndex);
+                    }
+                    
+                    handler.postDelayed(this, 500);
+                }
+            }
+        });
+    }
+    
+    /**
+     * Estimate current segment based on position
+     * 
+     * @param currentPosition Current position
+     * @param totalDuration Total duration
+     * @return Estimated segment index
+     */
+    private int estimateCurrentSegment(int currentPosition, int totalDuration) {
+        if (segments == null || segments.isEmpty() || totalDuration <= 0) {
+            return 0;
+        }
+        
+        float progress = (float) currentPosition / totalDuration;
+        return Math.min((int)(progress * segments.size()), segments.size() - 1);
+    }
+    
+    /**
+     * Stop playback
+     */
+    public void stop() {
+        // Stop TTS
+        if (tts != null && isInitialized) {
+            tts.stop();
+        }
+        
+        // Stop media player
+        if (mediaPlayer != null) {
+            try {
+                if (mediaPlayer.isPlaying()) {
+                    mediaPlayer.stop();
+                }
+                mediaPlayer.release();
+                mediaPlayer = null;
+            } catch (Exception e) {
+                Log.e(TAG, "Error stopping media player: " + e.getMessage());
+            }
+        }
+        
+        // Remove callbacks
+        handler.removeCallbacksAndMessages(null);
+    }
+    
+    /**
+     * Check if currently playing
+     * 
+     * @return True if playing
+     */
+    public boolean isPlaying() {
+        return mediaPlayer != null && mediaPlayer.isPlaying();
+    }
+    
+    /**
+     * Set playback speed
+     * 
+     * @param speed Speed factor (0.5f - 2.0f)
+     * @return True if successful
+     */
+    public boolean setPlaybackSpeed(float speed) {
+        if (mediaPlayer == null || speed < 0.5f || speed > 2.0f) {
+            return false;
+        }
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                mediaPlayer.setPlaybackParams(mediaPlayer.getPlaybackParams().setSpeed(speed));
+                return true;
+            } catch (Exception e) {
+                Log.e(TAG, "Error setting playback speed: " + e.getMessage());
+                return false;
+            }
+        } else {
+            Log.i(TAG, "Playback speed control not supported on this device");
+            return false;
+        }
+    }
+    
+    /**
+     * Seek to position
+     * 
+     * @param position Position in milliseconds
+     */
+    public void seekTo(int position) {
+        if (mediaPlayer != null) {
+            try {
+                mediaPlayer.seekTo(position);
+            } catch (Exception e) {
+                Log.e(TAG, "Error seeking: " + e.getMessage());
+            }
+        }
+    }
+    
+    /**
+     * Get current position
+     * 
+     * @return Current position in milliseconds
+     */
+    public int getCurrentPosition() {
+        if (mediaPlayer != null) {
+            try {
+                return mediaPlayer.getCurrentPosition();
+            } catch (Exception e) {
+                Log.e(TAG, "Error getting position: " + e.getMessage());
+            }
+        }
+        return 0;
+    }
+    
+    /**
+     * Get total duration
+     * 
+     * @return Total duration in milliseconds
+     */
+    public int getTotalDuration() {
+        if (mediaPlayer != null) {
+            try {
+                return mediaPlayer.getDuration();
+            } catch (Exception e) {
+                Log.e(TAG, "Error getting duration: " + e.getMessage());
+            }
+        }
+        return 0;
+    }
+    
+    /**
+     * Release resources
+     */
+    public void shutdown() {
+        stop();
+        
+        if (tts != null) {
+            tts.shutdown();
+            tts = null;
+        }
+        
+        handler.removeCallbacksAndMessages(null);
+    }
+} 

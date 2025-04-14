@@ -1,7 +1,10 @@
 package com.example.aipodcast;
 
 import android.content.Intent;
+import android.media.MediaPlayer;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.MenuItem;
 import android.view.View;
@@ -15,8 +18,8 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.example.aipodcast.model.NewsArticle;
 import com.example.aipodcast.model.PodcastContent;
 import com.example.aipodcast.model.PodcastSegment;
-import com.example.aipodcast.service.EnhancedTTSHelper;
 import com.example.aipodcast.service.PodcastGenerator;
+import com.example.aipodcast.service.SimplifiedTTSHelper;
 import com.google.android.material.chip.Chip;
 import com.google.android.material.chip.ChipGroup;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
@@ -56,8 +59,10 @@ public class PodcastPlayerActivity extends AppCompatActivity {
     // Player state
     private boolean isPlaying = false;
     private boolean isPodcastGenerated = false;
+    private boolean isSeekBarTracking = false;
     private int currentSegmentIndex = 0;
     private float playbackSpeed = 1.0f;
+    private Handler progressHandler = new Handler(Looper.getMainLooper());
     
     // Data
     private ArrayList<String> selectedTopics;
@@ -65,9 +70,10 @@ public class PodcastPlayerActivity extends AppCompatActivity {
     private Set<NewsArticle> selectedArticles;
     private PodcastContent podcastContent;
     private File audioFile;
+    private boolean useAIGeneration = true; // Default to true
     
     // Services
-    private EnhancedTTSHelper ttsHelper;
+    private SimplifiedTTSHelper ttsHelper;
     private PodcastGenerator podcastGenerator;
     
     // Runnable for seekbar updates
@@ -82,6 +88,7 @@ public class PodcastPlayerActivity extends AppCompatActivity {
         Intent intent = getIntent();
         selectedTopics = intent.getStringArrayListExtra("selected_topics");
         duration = intent.getIntExtra("duration", 5);
+        useAIGeneration = intent.getBooleanExtra("use_ai_generation", true);
         
         // 修改：接收ArrayList而不是Set
         ArrayList<NewsArticle> articlesList = (ArrayList<NewsArticle>) intent.getSerializableExtra("selected_articles_list");
@@ -96,13 +103,19 @@ public class PodcastPlayerActivity extends AppCompatActivity {
         }
         
         // Initialize services
-        ttsHelper = new EnhancedTTSHelper(this);
+        ttsHelper = new SimplifiedTTSHelper(this);
         podcastGenerator = new PodcastGenerator(selectedArticles, duration, selectedTopics);
+        
+        // Configure AI generation
+        podcastGenerator.setUseAI(useAIGeneration);
         
         // Initialize UI
         initializeViews();
         setupListeners();
         setupProgressTracking();
+        
+        // Apply animations
+        animateUserInterface();
         
         // Start podcast generation
         showGeneratingState(true);
@@ -159,13 +172,17 @@ public class PodcastPlayerActivity extends AppCompatActivity {
             
             @Override
             public void onStartTrackingTouch(SeekBar seekBar) {
-                // Optional: Pause updates while seeking
+                // Pause updates while seeking
+                isSeekBarTracking = true;
             }
             
             @Override
             public void onStopTrackingTouch(SeekBar seekBar) {
-                // Implement seeking to position
-                // ttsHelper.seekTo(seekBar.getProgress());
+                // Seek to position when user stops dragging
+                if (ttsHelper != null && isPodcastGenerated) {
+                    ttsHelper.seekTo(seekBar.getProgress() * 1000); // Convert to milliseconds
+                }
+                isSeekBarTracking = false;
             }
         });
         
@@ -174,7 +191,9 @@ public class PodcastPlayerActivity extends AppCompatActivity {
             if (fromUser) {
                 playbackSpeed = value;
                 updateSpeedText();
-                // ttsHelper.setPlaybackSpeed(value);
+                if (ttsHelper != null && isPodcastGenerated) {
+                    ttsHelper.setPlaybackSpeed(value);
+                }
             }
         });
     }
@@ -183,31 +202,26 @@ public class PodcastPlayerActivity extends AppCompatActivity {
      * Set up progress tracking for TTS
      */
     private void setupProgressTracking() {
-        ttsHelper.setProgressListener(new EnhancedTTSHelper.ProgressListener() {
+        ttsHelper.setProgressCallback(new SimplifiedTTSHelper.ProgressCallback() {
             @Override
-            public void onPrepared() {
+            public void onProgress(int currentPosition, int totalDuration, int segmentIndex) {
                 runOnUiThread(() -> {
-                    showGeneratingState(false);
-                    updatePlayButtonState(true);
-                });
-            }
-            
-            @Override
-            public void onProgress(int segmentIndex, int totalSegments, String currentText) {
-                runOnUiThread(() -> {
-                    currentSegmentIndex = segmentIndex;
+                    if (segmentIndex != currentSegmentIndex) {
+                        // Segment changed, show feedback
+                        currentSegmentIndex = segmentIndex;
+                        highlightCurrentSegment();
+                    }
+                    
                     if (podcastContent != null && segmentIndex < podcastContent.getSegments().size()) {
                         PodcastSegment segment = podcastContent.getSegments().get(segmentIndex);
                         currentSectionLabel.setText(segment.getTitle());
                         transcriptText.setText(segment.getText());
                     }
-                });
-            }
-            
-            @Override
-            public void onSegmentComplete(int segmentIndex) {
-                runOnUiThread(() -> {
-                    Log.d(TAG, "Segment complete: " + segmentIndex);
+                    
+                    // Update seek bar and time displays
+                    seekBar.setProgress(currentPosition / 1000); // Convert to seconds
+                    updateCurrentTimeText(currentPosition / 1000);
+                    updateTotalTimeText(totalDuration / 1000);
                 });
             }
             
@@ -216,14 +230,18 @@ public class PodcastPlayerActivity extends AppCompatActivity {
                 runOnUiThread(() -> {
                     updatePlayButtonState(false);
                     resetToBeginning();
+                    isPlaying = false;
+                    stopProgressUpdates();
                 });
             }
             
             @Override
-            public void onError(String errorMessage) {
+            public void onError(String message) {
                 runOnUiThread(() -> {
-                    showError("Error during playback: " + errorMessage);
+                    showError("Error during playback: " + message);
                     updatePlayButtonState(false);
+                    isPlaying = false;
+                    stopProgressUpdates();
                 });
             }
         });
@@ -233,7 +251,11 @@ public class PodcastPlayerActivity extends AppCompatActivity {
      * Generate podcast content from selected articles
      */
     private void generatePodcast() {
-        generationStatus.setText("Generating podcast content...");
+        if (useAIGeneration) {
+            generationStatus.setText("Generating AI conversation podcast...");
+        } else {
+            generationStatus.setText("Generating standard podcast content...");
+        }
         generationProgress.setIndeterminate(true);
         
         // Generate podcast content asynchronously
@@ -245,14 +267,20 @@ public class PodcastPlayerActivity extends AppCompatActivity {
                     // Update UI with generated content info
                     updatePodcastInfo();
                     
-                    // Prepare for TTS
-                    generationStatus.setText("Converting to speech...");
+                    // Mark as generated
+                    isPodcastGenerated = true;
                     
-                    // Option 1: Synthesize to file for better playback control
-                    synthesizeToFile();
+                    // Hide generating state
+                    showGeneratingState(false);
                     
-                    // Option 2: Direct speech without file creation
-                    // directSpeechPlayback();
+                    // Update total duration
+                    updateTotalTimeText(podcastContent.getTotalDuration());
+                    
+                    // Update UI for player
+                    updateUIForPlayerState();
+                    
+                    // Prepare for direct playback
+                    generationStatus.setText("Ready to play");
                 });
             })
             .exceptionally(e -> {
@@ -268,24 +296,8 @@ public class PodcastPlayerActivity extends AppCompatActivity {
      * Synthesize podcast content to audio file
      */
     private void synthesizeToFile() {
-        ttsHelper.synthesizeToFile(podcastContent)
-            .thenAccept(file -> {
-                audioFile = file;
-                isPodcastGenerated = true;
-                
-                runOnUiThread(() -> {
-                    showGeneratingState(false);
-                    updatePlayButtonState(false);
-                    updateTotalTimeText(podcastContent.getTotalDuration());
-                });
-            })
-            .exceptionally(e -> {
-                runOnUiThread(() -> {
-                    showError("Error synthesizing audio: " + e.getMessage());
-                    showGeneratingState(false);
-                });
-                return null;
-            });
+        // 简化版的TTS不支持合成文件，这里直接使用直接播放
+        directSpeechPlayback();
     }
     
     /**
@@ -293,9 +305,14 @@ public class PodcastPlayerActivity extends AppCompatActivity {
      */
     private void directSpeechPlayback() {
         if (podcastContent != null) {
-            isPlaying = ttsHelper.speak(podcastContent);
+            isPlaying = ttsHelper.speakPodcast(podcastContent);
             updatePlayButtonState(isPlaying);
             showGeneratingState(false);
+            updateUIForPlayerState();
+            
+            if (isPlaying) {
+                startProgressUpdates();
+            }
         }
     }
     
@@ -319,6 +336,113 @@ public class PodcastPlayerActivity extends AppCompatActivity {
     }
     
     /**
+     * Start periodic updates of the seek bar progress
+     */
+    private void startProgressUpdates() {
+        // Remove any existing callbacks
+        stopProgressUpdates();
+        
+        // Start updating progress
+        progressHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                if (isPlaying && !isSeekBarTracking && isPodcastGenerated && ttsHelper != null) {
+                    updateProgress();
+                    progressHandler.postDelayed(this, 500); // Update every 500ms
+                }
+            }
+        });
+    }
+    
+    /**
+     * Stop periodic progress updates
+     */
+    private void stopProgressUpdates() {
+        progressHandler.removeCallbacksAndMessages(null);
+    }
+    
+    /**
+     * Update the progress UI (seekbar and time displays)
+     */
+    private void updateProgress() {
+        if (ttsHelper == null) return;
+        
+        try {
+            int currentPosition = ttsHelper.getCurrentPosition() / 1000; // Convert from ms to seconds
+            int totalDuration = ttsHelper.getTotalDuration() / 1000;
+            
+            // Update seek bar
+            seekBar.setMax(totalDuration);
+            seekBar.setProgress(currentPosition);
+            
+            // Update time displays
+            updateCurrentTimeText(currentPosition);
+            updateTotalTimeText(totalDuration);
+        } catch (Exception e) {
+            Log.e(TAG, "Error updating progress: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Skip to previous segment
+     */
+    private void skipToPreviousSegment() {
+        if (!isPodcastGenerated || podcastContent == null || podcastContent.getSegments().isEmpty()) {
+            return;
+        }
+        
+        // Calculate previous segment index
+        int prevIndex = Math.max(0, currentSegmentIndex - 1);
+        
+        // If we're already near the start of the current segment, go to previous segment
+        // Otherwise, go to the start of the current segment
+        int currentPosition = ttsHelper.getCurrentPosition();
+        if (currentPosition < 3000) { // If we're less than 3 seconds into current segment
+            seekToSegment(prevIndex);
+        } else {
+            seekToSegment(currentSegmentIndex); // Go to start of current segment
+        }
+    }
+    
+    /**
+     * Skip to next segment
+     */
+    private void skipToNextSegment() {
+        if (!isPodcastGenerated || podcastContent == null || podcastContent.getSegments().isEmpty()) {
+            return;
+        }
+        
+        int nextIndex = Math.min(currentSegmentIndex + 1, podcastContent.getSegments().size() - 1);
+        seekToSegment(nextIndex);
+    }
+    
+    /**
+     * Seek to a specific segment
+     * 
+     * @param segmentIndex Index of segment to seek to
+     */
+    private void seekToSegment(int segmentIndex) {
+        if (!isPodcastGenerated || ttsHelper == null) return;
+        
+        // Calculate position based on segment index
+        int totalDuration = ttsHelper.getTotalDuration();
+        float segmentProgress = (float) segmentIndex / podcastContent.getSegments().size();
+        int position = (int) (segmentProgress * totalDuration);
+        
+        // Seek to position
+        ttsHelper.seekTo(position);
+        currentSegmentIndex = segmentIndex;
+        
+        // Update UI
+        if (segmentIndex < podcastContent.getSegments().size()) {
+            PodcastSegment segment = podcastContent.getSegments().get(segmentIndex);
+            currentSectionLabel.setText(segment.getTitle());
+            transcriptText.setText(segment.getText());
+            highlightCurrentSegment();
+        }
+    }
+    
+    /**
      * Toggle playback (play/pause)
      */
     private void togglePlayback() {
@@ -327,32 +451,18 @@ public class PodcastPlayerActivity extends AppCompatActivity {
         if (isPlaying) {
             ttsHelper.stop();
             isPlaying = false;
+            stopProgressUpdates();
         } else {
             if (audioFile != null) {
-                ttsHelper.playAudioFile(audioFile, podcastContent);
-                isPlaying = true;
+                isPlaying = ttsHelper.playAudio(audioFile);
+                startProgressUpdates();
             } else {
-                isPlaying = ttsHelper.speak(podcastContent);
+                isPlaying = ttsHelper.speakPodcast(podcastContent);
+                startProgressUpdates();
             }
         }
         
         updatePlayButtonState(isPlaying);
-    }
-    
-    /**
-     * Skip to previous segment
-     */
-    private void skipToPreviousSegment() {
-        // To be implemented
-        showError("Skip to previous not implemented yet");
-    }
-    
-    /**
-     * Skip to next segment
-     */
-    private void skipToNextSegment() {
-        // To be implemented
-        showError("Skip to next not implemented yet");
     }
     
     /**
@@ -419,14 +529,53 @@ public class PodcastPlayerActivity extends AppCompatActivity {
     }
     
     /**
-     * Show or hide the generating state UI
-     * 
-     * @param isGenerating True to show generating UI, false to hide
+     * Show or hide the generating state UI with animation
      */
     private void showGeneratingState(boolean isGenerating) {
         int visibility = isGenerating ? View.VISIBLE : View.GONE;
-        generationStatus.setVisibility(visibility);
-        generationProgress.setVisibility(visibility);
+        
+        if (isGenerating) {
+            generationStatus.setAlpha(0f);
+            generationProgress.setAlpha(0f);
+            
+            generationStatus.setVisibility(visibility);
+            generationProgress.setVisibility(visibility);
+            
+            generationStatus.animate().alpha(1f).setDuration(300).start();
+            generationProgress.animate().alpha(1f).setDuration(300).start();
+        } else {
+            generationStatus.animate().alpha(0f).setDuration(300)
+                    .withEndAction(() -> generationStatus.setVisibility(View.GONE)).start();
+            generationProgress.animate().alpha(0f).setDuration(300)
+                    .withEndAction(() -> generationProgress.setVisibility(View.GONE)).start();
+        }
+    }
+    
+    /**
+     * Show visual feedback for segment changes
+     */
+    private void highlightCurrentSegment() {
+        if (podcastContent == null || 
+            currentSegmentIndex < 0 || 
+            currentSegmentIndex >= podcastContent.getSegments().size()) {
+            return;
+        }
+        
+        // Flash the background of the text view
+        transcriptText.setBackgroundColor(0x22FF0000); // Light red background
+        
+        // Animate back to normal
+        transcriptText.animate()
+                .setDuration(500)
+                .withEndAction(() -> transcriptText.setBackgroundColor(0x00000000))
+                .start();
+        
+        // Scroll to show current segment
+        androidx.core.widget.NestedScrollView scrollView = findViewById(R.id.content_scroll_view);
+        View transcriptCard = findViewById(R.id.transcript_card);
+        if (scrollView != null && transcriptCard != null) {
+            scrollView.smoothScrollTo(0, transcriptCard.getTop());
+        }
     }
     
     /**
@@ -439,11 +588,108 @@ public class PodcastPlayerActivity extends AppCompatActivity {
         Log.e(TAG, message);
     }
     
+    /**
+     * Apply entrance animations to UI elements
+     */
+    private void animateUserInterface() {
+        // Get references to animated views
+        View podcastHeaderCard = findViewById(R.id.podcast_header_card);
+        View currentSectionLabel = findViewById(R.id.current_section_label);
+        View transcriptCard = findViewById(R.id.transcript_card);
+        View playerControls = findViewById(R.id.player_controls);
+        
+        // Define animation properties
+        final int duration = 500;
+        final int staggerDelay = 150;
+        
+        // Animate header card
+        podcastHeaderCard.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setDuration(duration)
+                .setStartDelay(staggerDelay)
+                .start();
+        
+        // Animate section label
+        currentSectionLabel.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setDuration(duration)
+                .setStartDelay(staggerDelay * 2)
+                .start();
+        
+        // Animate transcript card
+        transcriptCard.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setDuration(duration)
+                .setStartDelay(staggerDelay * 3)
+                .start();
+        
+        // Animate player controls
+        playerControls.animate()
+                .translationY(0f)
+                .setDuration(duration)
+                .setStartDelay(staggerDelay * 4)
+                .start();
+    }
+    
+    /**
+     * Update UI based on player state
+     */
+    private void updateUIForPlayerState() {
+        boolean enableControls = isPodcastGenerated;
+        
+        // Update button states
+        prevButton.setEnabled(enableControls);
+        playPauseButton.setEnabled(enableControls);
+        nextButton.setEnabled(enableControls);
+        seekBar.setEnabled(enableControls);
+        speedSlider.setEnabled(enableControls);
+        
+        // Apply visual feedback
+        float alpha = enableControls ? 1.0f : 0.5f;
+        prevButton.setAlpha(alpha);
+        nextButton.setAlpha(alpha);
+        speedSlider.setAlpha(alpha);
+        
+        // Show player controls
+        findViewById(R.id.player_controls).setVisibility(View.VISIBLE);
+        
+        // Set initial segment text
+        if (podcastContent != null && !podcastContent.getSegments().isEmpty()) {
+            PodcastSegment segment = podcastContent.getSegments().get(0);
+            currentSectionLabel.setText(segment.getTitle());
+            transcriptText.setText(segment.getText());
+        }
+    }
+    
+    @Override
+    protected void onPause() {
+        super.onPause();
+        // Stop updates when activity is paused
+        stopProgressUpdates();
+    }
+    
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // Resume updates if we were playing
+        if (isPlaying) {
+            startProgressUpdates();
+        }
+    }
+    
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        // Release resources
+        stopProgressUpdates();
+        progressHandler.removeCallbacksAndMessages(null);
+        
         if (ttsHelper != null) {
             ttsHelper.shutdown();
+            ttsHelper = null;
         }
     }
 } 

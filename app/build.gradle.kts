@@ -17,6 +17,8 @@ android {
 
         // Guardian API key configuration
         buildConfigField("String", "GUARDIAN_API_KEY", "\"32889b00-8204-457c-86a0-2b9dd79a5c1d\"")
+        // OpenAI API key configuration
+        buildConfigField("String", "OPENAI_API_KEY", "\"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\"")
     }
 
     buildTypes {
@@ -54,6 +56,11 @@ dependencies {
     // HTTP and JSON
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.json:json:20240303")
+    
+    // OpenAI API dependencies
+    implementation("com.squareup.retrofit2:retrofit:2.9.0")
+    implementation("com.squareup.retrofit2:converter-gson:2.9.0")
+    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
     
     // Testing
     testImplementation("junit:junit:4.13.2")

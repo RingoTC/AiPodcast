@@ -2,6 +2,7 @@ package com.example.aipodcast.service;
 
 import android.util.Log;
 
+import com.example.aipodcast.config.ApiConfig;
 import com.example.aipodcast.model.NewsArticle;
 import com.example.aipodcast.model.PodcastContent;
 import com.example.aipodcast.model.PodcastSegment;
@@ -17,6 +18,7 @@ import java.util.concurrent.CompletableFuture;
 /**
  * Service responsible for generating structured podcast content from news articles.
  * Creates a well-formatted podcast with intro, news segments, transitions, and conclusion.
+ * Now includes AI-generated conversational content using OpenAI's GPT-4o model.
  */
 public class PodcastGenerator {
     private static final String TAG = "PodcastGenerator";
@@ -24,6 +26,8 @@ public class PodcastGenerator {
     private Set<NewsArticle> selectedArticles;
     private int targetDuration; // target duration in minutes
     private List<String> topics;
+    private boolean useAI; // Flag for using AI-generated content
+    private OpenAIService openAIService;
     
     /**
      * Constructor for PodcastGenerator
@@ -36,6 +40,22 @@ public class PodcastGenerator {
         this.selectedArticles = articles;
         this.targetDuration = duration;
         this.topics = topics;
+        
+        // Default to using AI if API key is set
+        this.useAI = !ApiConfig.OPENAI_API_KEY.equals("your_openai_api_key_here");
+        
+        if (this.useAI) {
+            this.openAIService = new OpenAIService(ApiConfig.OPENAI_API_KEY);
+        }
+    }
+    
+    /**
+     * Set whether to use AI-generated content
+     * 
+     * @param useAI True to use AI, false to use template-based content
+     */
+    public void setUseAI(boolean useAI) {
+        this.useAI = useAI && !ApiConfig.OPENAI_API_KEY.equals("your_openai_api_key_here");
     }
     
     /**
@@ -44,11 +64,18 @@ public class PodcastGenerator {
      * @return CompletableFuture that will complete with the generated podcast content
      */
     public CompletableFuture<PodcastContent> generateContentAsync() {
-        return CompletableFuture.supplyAsync(this::generateContent);
+        if (useAI && openAIService != null) {
+            // Use AI-generated conversational content
+            String title = createPodcastTitle();
+            return openAIService.generatePodcastContent(selectedArticles, topics, targetDuration, title);
+        } else {
+            // Use template-based content (original implementation)
+            return CompletableFuture.supplyAsync(this::generateContent);
+        }
     }
     
     /**
-     * Generate a complete podcast content synchronously
+     * Generate a complete podcast content synchronously using templates
      * 
      * @return The generated podcast content
      */
