@@ -36,10 +36,13 @@ import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.chip.Chip;
 import com.google.android.material.chip.ChipGroup;
 import com.google.android.material.snackbar.Snackbar;
+import com.google.android.material.floatingactionbutton.FloatingActionButton;
+import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton;
 
 import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -62,6 +65,9 @@ public class InputActivity extends AppCompatActivity {
     private TextView timeLabel;
     private int selectedTime = 0;
     private TextToSpeechHelper ttsHelper;
+    private com.google.android.material.floatingactionbutton.FloatingActionButton generatePodcastFab;
+    private com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton selectModeButton;
+    private boolean isPodcastMode = false;
 
     // Data
     private NewsAdapter newsAdapter;
@@ -90,6 +96,9 @@ public class InputActivity extends AppCompatActivity {
         // Get selected topics from intent
         selectedTopics = getIntent().getStringArrayListExtra("selected_topics");
         duration = getIntent().getIntExtra("duration", 5);
+        
+        // Check if we're in podcast mode
+        isPodcastMode = getIntent().getBooleanExtra("podcast_mode", false);
 
         // Initialize repository and connectivity manager
         newsRepository = NewsRepositoryProvider.getRepository(this);
@@ -100,6 +109,7 @@ public class InputActivity extends AppCompatActivity {
         setupRecyclerView();
         setupListeners();
         setupSelectedTopics();
+        updateUIForMode();
 
         // Apply animations
         animateUI();
@@ -130,9 +140,94 @@ public class InputActivity extends AppCompatActivity {
         newsRecyclerView = findViewById(R.id.news_recycler_view);
         emptyStateView = findViewById(R.id.empty_state_view);
         searchCard = findViewById(R.id.search_card);
+        generatePodcastFab = findViewById(R.id.generate_podcast_fab);
+        selectModeButton = findViewById(R.id.select_mode_button);
 
-        // Update search title to show duration
-        searchTitle.setText(String.format("News for %d minute podcast", duration));
+        // Update search title based on mode
+        if (isPodcastMode) {
+            searchTitle.setText(String.format("Select News for %d Minute Podcast", duration));
+        } else {
+            searchTitle.setText(String.format("News for %d minute podcast", duration));
+        }
+    }
+
+    /**
+     * Update UI elements based on the current mode
+     */
+    private void updateUIForMode() {
+        if (isPodcastMode) {
+            // Show selection UI elements
+            selectModeButton.setVisibility(View.VISIBLE);
+            generatePodcastFab.setVisibility(View.VISIBLE);
+            
+            // Initially hide the generate button until articles are selected
+            generatePodcastFab.hide();
+            
+            // Set the FAB click listener
+            generatePodcastFab.setOnClickListener(v -> handlePodcastGeneration());
+            
+            // Setup selection mode button
+            selectModeButton.setOnClickListener(v -> toggleSelectionMode());
+        } else {
+            // Hide selection UI elements in browse mode
+            if (selectModeButton != null) selectModeButton.setVisibility(View.GONE);
+            if (generatePodcastFab != null) generatePodcastFab.setVisibility(View.GONE);
+        }
+    }
+    
+    /**
+     * Toggle selection mode for news articles
+     */
+    private void toggleSelectionMode() {
+        if (newsAdapter != null) {
+            boolean newMode = !newsAdapter.isSelectMode();
+            newsAdapter.setSelectMode(newMode);
+            
+            // Update button text
+            selectModeButton.setText(newMode ? "Cancel Selection" : "Select Articles");
+            
+            // Show or hide the generate podcast button
+            if (newMode) {
+                newsAdapter.setOnSelectionChangedListener(selectedArticles -> {
+                    if (selectedArticles != null && !selectedArticles.isEmpty()) {
+                        generatePodcastFab.show();
+                    } else {
+                        generatePodcastFab.hide();
+                    }
+                });
+            } else {
+                generatePodcastFab.hide();
+            }
+        }
+    }
+    
+    /**
+     * Handle podcast generation action
+     */
+    private void handlePodcastGeneration() {
+        if (newsAdapter == null || !newsAdapter.isSelectMode()) {
+            showError("Please select articles first");
+            return;
+        }
+        
+        Set<NewsArticle> selectedArticles = newsAdapter.getSelectedArticles();
+        if (selectedArticles.isEmpty()) {
+            showError("Please select at least one article");
+            return;
+        }
+        
+        // Here you would implement the actual podcast generation
+        // For now, just show a confirmation
+        Snackbar.make(generatePodcastFab, 
+                String.format("Generating podcast from %d articles...", selectedArticles.size()), 
+                Snackbar.LENGTH_LONG).show();
+        
+        // Todo: Implement actual podcast generation and playback
+        
+        // Reset selection mode after generating
+        newsAdapter.setSelectMode(false);
+        selectModeButton.setText("Select Articles");
+        generatePodcastFab.hide();
     }
 
     /**

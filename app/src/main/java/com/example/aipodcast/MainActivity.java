@@ -179,9 +179,23 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         
-        String message = String.format("Generating podcast for topics: %s", 
-                String.join(", ", selectedTopics));
-        Snackbar.make(generatePodcastButton, message, Snackbar.LENGTH_LONG).show();
+        try {
+            Intent intent = new Intent(this, InputActivity.class);
+            intent.putStringArrayListExtra("selected_topics", new ArrayList<>(selectedTopics));
+            intent.putExtra("duration", commuteDuration); // Pass the selected duration
+            intent.putExtra("podcast_mode", true); // Set podcast mode flag to true
+            
+            // Create transition animation
+            Pair<View, String> p1 = Pair.create(logoCard, "app_logo_transition");
+            ActivityOptions options = ActivityOptions.makeSceneTransitionAnimation(this, p1);
+            
+            startActivity(intent, options.toBundle());
+        } catch (Exception e) {
+            Log.e(TAG, "Error navigating to InputActivity: " + e.getMessage());
+            Snackbar.make(generatePodcastButton, 
+                    "Error opening podcast selection screen. Please try again.", 
+                    Snackbar.LENGTH_LONG).show();
+        }
     }
 
     /**
