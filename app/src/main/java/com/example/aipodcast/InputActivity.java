@@ -1,6 +1,7 @@
 package com.example.aipodcast;
 
 import android.content.Context;
+import android.content.Intent;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.net.Uri;
@@ -216,18 +217,27 @@ public class InputActivity extends AppCompatActivity {
             return;
         }
         
-        // Here you would implement the actual podcast generation
-        // For now, just show a confirmation
-        Snackbar.make(generatePodcastFab, 
-                String.format("Generating podcast from %d articles...", selectedArticles.size()), 
-                Snackbar.LENGTH_LONG).show();
-        
-        // Todo: Implement actual podcast generation and playback
-        
-        // Reset selection mode after generating
-        newsAdapter.setSelectMode(false);
-        selectModeButton.setText("Select Articles");
-        generatePodcastFab.hide();
+        // Launch the podcast player activity with the selected articles
+        try {
+            Intent intent = new Intent(this, PodcastPlayerActivity.class);
+            intent.putStringArrayListExtra("selected_topics", selectedTopics);
+            intent.putExtra("duration", duration);
+            
+            // 修改：使用ArrayList，不尝试直接传递Set
+            ArrayList<NewsArticle> articlesList = new ArrayList<>(selectedArticles);
+            intent.putExtra("selected_articles_list", articlesList);
+            
+            startActivity(intent);
+            
+            // Reset selection mode
+            newsAdapter.setSelectMode(false);
+            selectModeButton.setText("Select Articles");
+            generatePodcastFab.hide();
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Error launching PodcastPlayerActivity: " + e.getMessage());
+            showError("Error launching podcast player: " + e.getMessage());
+        }
     }
 
     /**

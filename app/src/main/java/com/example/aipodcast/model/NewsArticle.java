@@ -1,6 +1,10 @@
 package com.example.aipodcast.model;
 
-public class NewsArticle {
+import java.io.Serializable;
+
+public class NewsArticle implements Serializable {
+    private static final long serialVersionUID = 1L;
+    
     private String title;
     private String abstract_;
     private String url;

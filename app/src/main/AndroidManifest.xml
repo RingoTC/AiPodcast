@@ -40,5 +40,12 @@
             android:exported="true"
             android:label="@string/app_name"
             android:theme="@style/Theme.A6" />
+
+        <!-- Podcast Player Activity -->
+        <activity
+            android:name=".PodcastPlayerActivity"
+            android:exported="false"
+            android:label="Podcast Player"
+            android:parentActivityName=".InputActivity" />
     </application>
 </manifest>
