@@ -698,13 +698,22 @@ public class PodcastPlayerActivity extends AppCompatActivity {
         // Remove any existing callbacks
         stopProgressUpdates();
         
-        // Start updating progress
+        // Start updating progress more frequently
         progressHandler.post(new Runnable() {
             @Override
             public void run() {
-                if (isPlaying && !isSeekBarTracking && isPodcastGenerated && ttsHelper != null) {
-                    updateProgress();
-                    progressHandler.postDelayed(this, 500); // Update every 500ms
+                if (isPodcastGenerated && ttsHelper != null) {
+                    // Check if playing or being tracked
+                    boolean shouldUpdate = isPlaying || 
+                        (ttsHelper != null && ttsHelper.isSpeaking());
+                    
+                    if (shouldUpdate && !isSeekBarTracking) {
+                        updateProgress();
+                    }
+                    
+                    // Continue updating regardless of playback state
+                    // This ensures we catch when playback starts again
+                    progressHandler.postDelayed(this, 250); // Update every 250ms
                 }
             }
         });
@@ -727,13 +736,27 @@ public class PodcastPlayerActivity extends AppCompatActivity {
             int currentPosition = ttsHelper.getCurrentPosition() / 1000; // Convert from ms to seconds
             int totalDuration = ttsHelper.getTotalDuration() / 1000;
             
-            // Update seek bar
-            seekBar.setMax(totalDuration);
-            seekBar.setProgress(currentPosition);
+            if (totalDuration <= 0) {
+                // If we don't have a valid duration, estimate from podcast content
+                if (podcastContent != null) {
+                    totalDuration = podcastContent.getTotalDuration();
+                }
+            }
             
-            // Update time displays
-            updateCurrentTimeText(currentPosition);
-            updateTotalTimeText(totalDuration);
+            // Ensure we have valid values before updating UI
+            if (currentPosition >= 0 && totalDuration > 0) {
+                // Update seek bar
+                seekBar.setMax(totalDuration);
+                seekBar.setProgress(currentPosition);
+                
+                // Update time displays
+                updateCurrentTimeText(currentPosition);
+                updateTotalTimeText(totalDuration);
+                
+                // Log for debugging
+                Log.d(TAG, "Progress updated - position: " + currentPosition + 
+                      "s, duration: " + totalDuration + "s");
+            }
         } catch (Exception e) {
             Log.e(TAG, "Error updating progress: " + e.getMessage());
         }
@@ -2472,5 +2495,10 @@ public class PodcastPlayerActivity extends AppCompatActivity {
             Log.e(TAG, "Error in direct TTS: " + e.getMessage());
             showError("Could not initialize TTS: " + e.getMessage());
         }
+    }
+
+    // Add helper method to check if TTS is speaking
+    private boolean isSpeaking() {
+        return ttsHelper != null && ttsHelper.isSpeaking();
     }
 } 

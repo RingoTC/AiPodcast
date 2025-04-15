@@ -41,6 +41,13 @@ public class SimplifiedTTSHelper {
     private ProgressCallback progressCallback;
     private WordTrackingCallback wordTrackingCallback;
     
+    // New fields for TTS progress tracking
+    private long ttsStartTime = 0;
+    private int ttsSimulationOffset = 0;
+    private int ttsTotalDuration = 0;
+    private String ttsText = null;
+    private boolean isTtsSeeking = false;
+    
     /**
      * Callback interface for progress updates
      */
@@ -217,22 +224,32 @@ public class SimplifiedTTSHelper {
         final int totalDuration = estimateTTSDuration(text);
         final long startTime = System.currentTimeMillis();
         
+        // Store the current simulation state for seeking
+        final long[] simulationStartTime = {startTime};
+        final int[] simulationOffset = {0};
+        
         handler.post(new Runnable() {
             @Override
             public void run() {
                 if (tts != null && tts.isSpeaking()) {
-                    long elapsedTime = System.currentTimeMillis() - startTime;
-                    int currentPosition = (int) Math.min(elapsedTime, totalDuration);
+                    long elapsedTime = System.currentTimeMillis() - simulationStartTime[0];
+                    int currentPosition = Math.min(simulationOffset[0] + (int)elapsedTime, totalDuration);
                     int segmentIndex = estimateCurrentSegment(currentPosition, totalDuration);
                     
                     if (progressCallback != null) {
                         progressCallback.onProgress(currentPosition, totalDuration, segmentIndex);
                     }
                     
-                    handler.postDelayed(this, 500);
+                    handler.postDelayed(this, 100); // Update more frequently (100ms)
                 }
             }
         });
+        
+        // Store these values for seekTo method
+        this.ttsStartTime = simulationStartTime[0];
+        this.ttsSimulationOffset = simulationOffset[0];
+        this.ttsTotalDuration = totalDuration;
+        this.ttsText = text;
     }
     
     /**
@@ -419,9 +436,67 @@ public class SimplifiedTTSHelper {
             try {
                 mediaPlayer.seekTo(position);
             } catch (Exception e) {
-                Log.e(TAG, "Error seeking: " + e.getMessage());
+                Log.e(TAG, "Error seeking in MediaPlayer: " + e.getMessage());
+            }
+        } else if (tts != null && tts.isSpeaking() && ttsTotalDuration > 0) {
+            try {
+                // For TTS, we need to simulate seeking by stopping and restarting at appropriate position
+                isTtsSeeking = true;
+                
+                // Calculate what percentage of the total text to skip
+                float percentage = (float) position / ttsTotalDuration;
+                int textPosition = (int) (ttsText.length() * percentage);
+                
+                // Ensure text position is valid
+                textPosition = Math.max(0, Math.min(textPosition, ttsText.length() - 1));
+                
+                // Find the nearest sentence boundary
+                int sentenceStart = findNearestSentenceBoundary(ttsText, textPosition);
+                
+                // Stop current speech
+                tts.stop();
+                
+                // Store the new offset for progress calculations
+                ttsSimulationOffset = position;
+                ttsStartTime = System.currentTimeMillis();
+                
+                // Speak the remaining text
+                String remainingText = ttsText.substring(sentenceStart);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    tts.speak(remainingText, TextToSpeech.QUEUE_FLUSH, null, "UTTERANCE_ID");
+                } else {
+                    HashMap<String, String> params = new HashMap<>();
+                    params.put(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "UTTERANCE_ID");
+                    tts.speak(remainingText, TextToSpeech.QUEUE_FLUSH, params);
+                }
+                
+                isTtsSeeking = false;
+            } catch (Exception e) {
+                Log.e(TAG, "Error seeking in TTS: " + e.getMessage());
+                isTtsSeeking = false;
             }
         }
+    }
+    
+    /**
+     * Helper method to find nearest sentence boundary
+     */
+    private int findNearestSentenceBoundary(String text, int position) {
+        if (text == null || text.isEmpty() || position >= text.length()) {
+            return 0;
+        }
+        
+        // Search backward for the start of the current sentence
+        int start = position;
+        while (start > 0) {
+            char c = text.charAt(start - 1);
+            if (c == '.' || c == '!' || c == '?') {
+                break;
+            }
+            start--;
+        }
+        
+        return start;
     }
     
     /**
@@ -434,8 +509,12 @@ public class SimplifiedTTSHelper {
             try {
                 return mediaPlayer.getCurrentPosition();
             } catch (Exception e) {
-                Log.e(TAG, "Error getting position: " + e.getMessage());
+                Log.e(TAG, "Error getting position from MediaPlayer: " + e.getMessage());
             }
+        } else if (tts != null && tts.isSpeaking() && ttsTotalDuration > 0) {
+            // For TTS, calculate position based on elapsed time and offset
+            long elapsedTime = System.currentTimeMillis() - ttsStartTime;
+            return Math.min(ttsSimulationOffset + (int)elapsedTime, ttsTotalDuration);
         }
         return 0;
     }
@@ -450,8 +529,10 @@ public class SimplifiedTTSHelper {
             try {
                 return mediaPlayer.getDuration();
             } catch (Exception e) {
-                Log.e(TAG, "Error getting duration: " + e.getMessage());
+                Log.e(TAG, "Error getting duration from MediaPlayer: " + e.getMessage());
             }
+        } else if (ttsTotalDuration > 0) {
+            return ttsTotalDuration;
         }
         return 0;
     }
@@ -468,5 +549,19 @@ public class SimplifiedTTSHelper {
         }
         
         handler.removeCallbacksAndMessages(null);
+    }
+    
+    /**
+     * Check if TTS is currently speaking
+     * 
+     * @return True if speaking
+     */
+    public boolean isSpeaking() {
+        if (mediaPlayer != null) {
+            return mediaPlayer.isPlaying();
+        } else if (tts != null && isInitialized) {
+            return tts.isSpeaking();
+        }
+        return false;
     }
 } 
