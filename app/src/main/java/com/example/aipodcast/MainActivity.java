@@ -52,10 +52,13 @@ public class MainActivity extends AppCompatActivity {
     private TextView creditsText;
     private Slider commuteTimeSlider;
     private TextView commuteTimeValue;
+    private com.google.android.material.switchmaterial.SwitchMaterial aiContentSwitch;
+    private TextView aiStatusText;
 
     // State
     private List<String> selectedTopics = new ArrayList<>();
     private int commuteDuration = 30; // Default duration in minutes
+    private boolean useAIGeneration = true; // Default to AI generation
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -97,6 +100,8 @@ public class MainActivity extends AppCompatActivity {
         creditsText = findViewById(R.id.credits_text);
         commuteTimeSlider = findViewById(R.id.commute_time_slider);
         commuteTimeValue = findViewById(R.id.commute_time_value);
+        aiContentSwitch = findViewById(R.id.ai_content_switch);
+        aiStatusText = findViewById(R.id.ai_status_text);
         
         setupCommuteTimeSlider();
     }
@@ -110,6 +115,9 @@ public class MainActivity extends AppCompatActivity {
         
         // Setup action buttons
         setupActionButtons();
+        
+        // Setup AI options
+        setupAIOptions();
     }
 
     /**
@@ -137,6 +145,33 @@ public class MainActivity extends AppCompatActivity {
         
         // Initially disable buttons
         updateButtonsState();
+    }
+
+    /**
+     * Setup AI generation options
+     */
+    private void setupAIOptions() {
+        // Set initial state
+        updateAIStatusText(aiContentSwitch.isChecked());
+        
+        // Set up switch listener
+        aiContentSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            useAIGeneration = isChecked;
+            updateAIStatusText(isChecked);
+        });
+    }
+    
+    /**
+     * Update AI status text based on switch state
+     * 
+     * @param isEnabled Whether AI generation is enabled
+     */
+    private void updateAIStatusText(boolean isEnabled) {
+        if (isEnabled) {
+            aiStatusText.setText("AI generation is enabled. Your podcast will feature a conversation between two hosts.");
+        } else {
+            aiStatusText.setText("AI generation is disabled. Your podcast will use a standard template format.");
+        }
     }
 
     /**
@@ -179,9 +214,24 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         
-        String message = String.format("Generating podcast for topics: %s", 
-                String.join(", ", selectedTopics));
-        Snackbar.make(generatePodcastButton, message, Snackbar.LENGTH_LONG).show();
+        try {
+            Intent intent = new Intent(this, InputActivity.class);
+            intent.putStringArrayListExtra("selected_topics", new ArrayList<>(selectedTopics));
+            intent.putExtra("duration", commuteDuration); // Pass the selected duration
+            intent.putExtra("podcast_mode", true); // Set podcast mode flag to true
+            intent.putExtra("use_ai_generation", useAIGeneration); // Pass AI generation flag
+            
+            // Create transition animation
+            Pair<View, String> p1 = Pair.create(logoCard, "app_logo_transition");
+            ActivityOptions options = ActivityOptions.makeSceneTransitionAnimation(this, p1);
+            
+            startActivity(intent, options.toBundle());
+        } catch (Exception e) {
+            Log.e(TAG, "Error navigating to InputActivity: " + e.getMessage());
+            Snackbar.make(generatePodcastButton, 
+                    "Error opening podcast selection screen. Please try again.", 
+                    Snackbar.LENGTH_LONG).show();
+        }
     }
 
     /**
@@ -197,6 +247,7 @@ public class MainActivity extends AppCompatActivity {
             Intent intent = new Intent(this, InputActivity.class);
             intent.putStringArrayListExtra("selected_topics", new ArrayList<>(selectedTopics));
             intent.putExtra("duration", commuteDuration); // Pass the selected duration
+            intent.putExtra("use_ai_generation", useAIGeneration); // Pass AI generation flag
             
             // Create transition animation
             Pair<View, String> p1 = Pair.create(logoCard, "app_logo_transition");

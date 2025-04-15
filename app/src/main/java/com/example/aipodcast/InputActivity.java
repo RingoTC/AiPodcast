@@ -1,6 +1,7 @@
 package com.example.aipodcast;
 
 import android.content.Context;
+import android.content.Intent;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.net.Uri;
@@ -30,16 +31,19 @@ import com.example.aipodcast.adapter.NewsAdapter;
 import com.example.aipodcast.model.NewsArticle;
 import com.example.aipodcast.repository.NewsRepository;
 import com.example.aipodcast.repository.NewsRepositoryProvider;
-import com.example.aipodcast.service.TextToSpeechHelper;
+import com.example.aipodcast.service.SimplifiedTTSHelper;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.chip.Chip;
 import com.google.android.material.chip.ChipGroup;
 import com.google.android.material.snackbar.Snackbar;
+import com.google.android.material.floatingactionbutton.FloatingActionButton;
+import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton;
 
 import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -61,7 +65,10 @@ public class InputActivity extends AppCompatActivity {
     private MaterialCardView searchCard;
     private TextView timeLabel;
     private int selectedTime = 0;
-    private TextToSpeechHelper ttsHelper;
+    private SimplifiedTTSHelper ttsHelper;
+    private com.google.android.material.floatingactionbutton.FloatingActionButton generatePodcastFab;
+    private com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton selectModeButton;
+    private boolean isPodcastMode = false;
 
     // Data
     private NewsAdapter newsAdapter;
@@ -69,6 +76,8 @@ public class InputActivity extends AppCompatActivity {
     private List<NewsArticle> currentArticles = new ArrayList<>();
     private ArrayList<String> selectedTopics;
     private int duration;
+    private int commuteDuration;
+    private boolean useAIGeneration = true; // Default to true
 
     // Network
     private ConnectivityManager connectivityManager;
@@ -90,6 +99,12 @@ public class InputActivity extends AppCompatActivity {
         // Get selected topics from intent
         selectedTopics = getIntent().getStringArrayListExtra("selected_topics");
         duration = getIntent().getIntExtra("duration", 5);
+        
+        // Check if we're in podcast mode
+        isPodcastMode = getIntent().getBooleanExtra("podcast_mode", false);
+        
+        // Get AI generation flag
+        useAIGeneration = getIntent().getBooleanExtra("use_ai_generation", true);
 
         // Initialize repository and connectivity manager
         newsRepository = NewsRepositoryProvider.getRepository(this);
@@ -100,6 +115,7 @@ public class InputActivity extends AppCompatActivity {
         setupRecyclerView();
         setupListeners();
         setupSelectedTopics();
+        updateUIForMode();
 
         // Apply animations
         animateUI();
@@ -130,9 +146,108 @@ public class InputActivity extends AppCompatActivity {
         newsRecyclerView = findViewById(R.id.news_recycler_view);
         emptyStateView = findViewById(R.id.empty_state_view);
         searchCard = findViewById(R.id.search_card);
+        generatePodcastFab = findViewById(R.id.generate_podcast_fab);
+        selectModeButton = findViewById(R.id.select_mode_button);
 
-        // Update search title to show duration
-        searchTitle.setText(String.format("News for %d minute podcast", duration));
+        // Update search title based on mode
+        if (isPodcastMode) {
+            searchTitle.setText(String.format("Select News for %d Minute Podcast", duration));
+        } else {
+            searchTitle.setText(String.format("News for %d minute podcast", duration));
+        }
+    }
+
+    /**
+     * Update UI elements based on the current mode
+     */
+    private void updateUIForMode() {
+        if (isPodcastMode) {
+            // Show selection UI elements
+            selectModeButton.setVisibility(View.VISIBLE);
+            generatePodcastFab.setVisibility(View.VISIBLE);
+            
+            // Initially hide the generate button until articles are selected
+            generatePodcastFab.hide();
+            
+            // Set the FAB click listener
+            generatePodcastFab.setOnClickListener(v -> handlePodcastGeneration());
+            
+            // Setup selection mode button
+            selectModeButton.setOnClickListener(v -> toggleSelectionMode());
+        } else {
+            // Hide selection UI elements in browse mode
+            if (selectModeButton != null) selectModeButton.setVisibility(View.GONE);
+            if (generatePodcastFab != null) generatePodcastFab.setVisibility(View.GONE);
+        }
+    }
+    
+    /**
+     * Toggle selection mode for news articles
+     */
+    private void toggleSelectionMode() {
+        if (newsAdapter != null) {
+            boolean newMode = !newsAdapter.isSelectMode();
+            newsAdapter.setSelectMode(newMode);
+            
+            // Update button text
+            selectModeButton.setText(newMode ? "Cancel Selection" : "Select Articles");
+            
+            // Show or hide the generate podcast button
+            if (newMode) {
+                newsAdapter.setOnSelectionChangedListener(selectedArticles -> {
+                    if (selectedArticles != null && !selectedArticles.isEmpty()) {
+                        generatePodcastFab.show();
+                    } else {
+                        generatePodcastFab.hide();
+                    }
+                });
+            } else {
+                generatePodcastFab.hide();
+            }
+        }
+    }
+    
+    /**
+     * Handle podcast generation action
+     */
+    private void handlePodcastGeneration() {
+        if (newsAdapter == null || !newsAdapter.isSelectMode()) {
+            showError("Please select articles first");
+            return;
+        }
+        
+        Set<NewsArticle> selectedArticles = newsAdapter.getSelectedArticles();
+        if (selectedArticles.isEmpty()) {
+            showError("Please select at least one article");
+            return;
+        }
+        
+        // Launch the podcast player activity with the selected articles
+        try {
+            Intent intent = new Intent(this, PodcastPlayerActivity.class);
+            intent.putStringArrayListExtra("selected_topics", selectedTopics);
+            
+            // 修改：确保传递正确的duration参数
+            intent.putExtra("duration", duration);
+            Log.d(TAG, "Sending podcast duration to PodcastPlayerActivity: " + duration + " minutes");
+            
+            intent.putExtra("use_ai_generation", useAIGeneration);
+            
+            // 修改：使用ArrayList，不尝试直接传递Set
+            ArrayList<NewsArticle> articlesList = new ArrayList<>(selectedArticles);
+            intent.putExtra("selected_articles_list", articlesList);
+            
+            startActivity(intent);
+            
+            // Reset selection mode
+            newsAdapter.setSelectMode(false);
+            selectModeButton.setText("Select Articles");
+            generatePodcastFab.hide();
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Error launching PodcastPlayerActivity: " + e.getMessage());
+            showError("Error launching podcast player: " + e.getMessage());
+        }
     }
 
     /**
