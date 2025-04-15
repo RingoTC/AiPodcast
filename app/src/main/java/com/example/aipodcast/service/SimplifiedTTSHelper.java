@@ -39,6 +39,7 @@ public class SimplifiedTTSHelper {
     // Progress tracking
     private Handler handler = new Handler(Looper.getMainLooper());
     private ProgressCallback progressCallback;
+    private WordTrackingCallback wordTrackingCallback;
     
     /**
      * Callback interface for progress updates
@@ -50,11 +51,35 @@ public class SimplifiedTTSHelper {
     }
     
     /**
+     * Callback interface for word tracking
+     */
+    public interface WordTrackingCallback {
+        void onWordSpoken(String word, int indexInSpeech);
+    }
+    
+    /**
+     * Callback interface for initialization result
+     */
+    public interface InitCallback {
+        void onInitialized(boolean success);
+    }
+    
+    /**
      * Constructor
      * 
      * @param context Application context
      */
     public SimplifiedTTSHelper(Context context) {
+        this(context, null);
+    }
+    
+    /**
+     * Constructor with initialization callback
+     * 
+     * @param context Application context
+     * @param initCallback Callback for initialization result
+     */
+    public SimplifiedTTSHelper(Context context, InitCallback initCallback) {
         this.context = context;
         
         // Initialize TTS engine
@@ -72,8 +97,18 @@ public class SimplifiedTTSHelper {
                 } else {
                     Log.e(TAG, "Language not supported");
                 }
+                
+                // Notify callback
+                if (initCallback != null) {
+                    handler.post(() -> initCallback.onInitialized(isInitialized));
+                }
             } else {
                 Log.e(TAG, "TTS initialization failed with status: " + status);
+                
+                // Notify callback of failure
+                if (initCallback != null) {
+                    handler.post(() -> initCallback.onInitialized(false));
+                }
             }
         });
     }
@@ -85,6 +120,15 @@ public class SimplifiedTTSHelper {
      */
     public void setProgressCallback(ProgressCallback callback) {
         this.progressCallback = callback;
+    }
+    
+    /**
+     * Set word tracking callback
+     * 
+     * @param callback Callback for word tracking
+     */
+    public void setWordTrackingCallback(WordTrackingCallback callback) {
+        this.wordTrackingCallback = callback;
     }
     
     /**
@@ -107,6 +151,50 @@ public class SimplifiedTTSHelper {
         // Stop any current playback
         stop();
         
+        // Set up utterance progress listener for word tracking
+        if (wordTrackingCallback != null) {
+            tts.setOnUtteranceProgressListener(new android.speech.tts.UtteranceProgressListener() {
+                private int wordIndex = 0;
+                
+                @Override
+                public void onStart(String utteranceId) {
+                    wordIndex = 0;
+                }
+                
+                @Override
+                public void onDone(String utteranceId) {
+                    if (progressCallback != null) {
+                        handler.post(() -> progressCallback.onComplete());
+                    }
+                }
+                
+                @Override
+                public void onError(String utteranceId) {
+                    if (progressCallback != null) {
+                        handler.post(() -> progressCallback.onError("TTS error"));
+                    }
+                }
+                
+                @Override
+                public void onRangeStart(String utteranceId, int start, int end, int frame) {
+                    // This is called when a range of text is about to be spoken
+                    // Extract the word being spoken
+                    if (start >= 0 && end > start && end <= text.length()) {
+                        try {
+                            String word = text.substring(start, end);
+                            wordIndex++;
+                            if (wordTrackingCallback != null) {
+                                final int idx = wordIndex;
+                                handler.post(() -> wordTrackingCallback.onWordSpoken(word, idx));
+                            }
+                        } catch (Exception e) {
+                            Log.e(TAG, "Error tracking word: " + e.getMessage());
+                        }
+                    }
+                }
+            });
+        }
+        
         // Speak the text
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "UTTERANCE_ID");
@@ -116,7 +204,47 @@ public class SimplifiedTTSHelper {
             tts.speak(text, TextToSpeech.QUEUE_FLUSH, params);
         }
         
+        // Set up a timer to simulate progress updates since TTS doesn't provide position
+        startTTSProgressUpdates(text);
+        
         return true;
+    }
+    
+    /**
+     * Start simulated progress updates for TTS
+     */
+    private void startTTSProgressUpdates(String text) {
+        final int totalDuration = estimateTTSDuration(text);
+        final long startTime = System.currentTimeMillis();
+        
+        handler.post(new Runnable() {
+            @Override
+            public void run() {
+                if (tts != null && tts.isSpeaking()) {
+                    long elapsedTime = System.currentTimeMillis() - startTime;
+                    int currentPosition = (int) Math.min(elapsedTime, totalDuration);
+                    int segmentIndex = estimateCurrentSegment(currentPosition, totalDuration);
+                    
+                    if (progressCallback != null) {
+                        progressCallback.onProgress(currentPosition, totalDuration, segmentIndex);
+                    }
+                    
+                    handler.postDelayed(this, 500);
+                }
+            }
+        });
+    }
+    
+    /**
+     * Estimate the duration of TTS speech in milliseconds
+     */
+    private int estimateTTSDuration(String text) {
+        if (text == null || text.isEmpty()) return 0;
+        
+        // Rough estimate: ~60-70 words per minute for TTS, average word length ~5 chars
+        // So ~300-350 chars per minute or ~5 chars per second
+        float charsPerMs = 5.0f / 1000.0f;
+        return (int)(text.length() / charsPerMs);
     }
     
     /**

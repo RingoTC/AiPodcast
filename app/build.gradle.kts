@@ -8,7 +8,7 @@ android {
 
     defaultConfig {
         applicationId = "com.example.aipodcast"
-        minSdk = 24
+        minSdk = 26
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
@@ -36,8 +36,8 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
     }
 }
 
@@ -56,6 +56,18 @@ dependencies {
     // HTTP and JSON
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.json:json:20240303")
+    
+    // Media and ExoPlayer dependencies
+    implementation("androidx.media:media:1.7.0")
+    implementation("androidx.mediarouter:mediarouter:1.6.0")
+    
+    // ExoPlayer dependencies
+    implementation("com.google.android.exoplayer:exoplayer-core:2.19.1")
+    implementation("com.google.android.exoplayer:exoplayer-ui:2.19.1")
+    implementation("com.google.android.exoplayer:exoplayer-dash:2.19.1")
+    implementation("com.google.android.exoplayer:exoplayer-hls:2.19.1")
+    implementation("com.google.android.exoplayer:exoplayer-rtsp:2.19.1")
+    implementation("com.google.android.exoplayer:extension-mediasession:2.19.1")
     
     // OpenAI API dependencies
     implementation("com.squareup.retrofit2:retrofit:2.9.0")

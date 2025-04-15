@@ -64,57 +64,155 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <TextView
-                android:id="@+id/current_section_label"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Current Section"
-                android:textSize="16sp"
-                android:textStyle="bold"
-                android:textColor="@color/purple_700"
-                android:layout_marginBottom="8dp"
-                android:alpha="0"
-                android:translationY="50dp"/>
-
-            <com.google.android.material.card.MaterialCardView
+            <androidx.cardview.widget.CardView
                 android:id="@+id/transcript_card"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                app:cardCornerRadius="16dp"
+                android:layout_margin="16dp"
+                app:cardCornerRadius="12dp"
                 app:cardElevation="4dp"
-                android:alpha="0"
-                android:translationY="50dp">
+                app:cardBackgroundColor="@android:color/white">
 
-                <TextView
-                    android:id="@+id/transcript_text"
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:padding="16dp"
-                    android:textSize="16sp"
-                    android:textColor="@android:color/black"
-                    android:minHeight="200dp"
-                    android:text="Podcast transcript will appear here..."
-                    android:scrollbars="vertical"/>
-            </com.google.android.material.card.MaterialCardView>
+                    android:orientation="vertical"
+                    android:padding="16dp">
 
+                    <TextView
+                        android:id="@+id/current_section_label"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="8dp"
+                        android:text="Current Section"
+                        android:textSize="18sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/purple_700" />
+
+                    <androidx.core.widget.NestedScrollView
+                        android:id="@+id/transcript_scroll_view"
+                        android:layout_width="match_parent"
+                        android:layout_height="250dp">
+
+                        <TextView
+                            android:id="@+id/transcript_text"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:textSize="16sp"
+                            android:lineSpacingExtra="6dp"
+                            android:textIsSelectable="true"
+                            android:textColor="@android:color/black"
+                            android:padding="8dp" />
+
+                    </androidx.core.widget.NestedScrollView>
+
+                    <!-- AI Attribution info -->
+                    <LinearLayout
+                        android:id="@+id/ai_attribution_panel"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginTop="12dp"
+                        android:gravity="center_vertical">
+
+                        <ImageView
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:src="@android:drawable/ic_dialog_info"
+                            android:tint="@color/purple_500"
+                            android:contentDescription="AI Generated" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="AI Generated Content"
+                            android:textSize="12sp"
+                            android:textStyle="italic"
+                            android:textColor="@color/purple_500"
+                            android:layout_marginStart="8dp" />
+                    </LinearLayout>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <!-- Generation status -->
+            <androidx.cardview.widget.CardView
+                android:id="@+id/generation_status_card"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_margin="16dp"
+                app:cardCornerRadius="12dp"
+                app:cardElevation="8dp"
+                app:cardBackgroundColor="@color/purple_100">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
+
+                        <ProgressBar
+                            android:id="@+id/generation_progress"
+                            android:layout_width="36dp"
+                            android:layout_height="36dp"
+                            android:indeterminateTint="@color/purple_500" />
+
+                        <TextView
+                            android:id="@+id/generation_status"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:text="Generating AI podcast..."
+                            android:textColor="@color/purple_700"
+                            android:textSize="16sp" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/generation_tip"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:text="This might take a minute. Our AI is creating high-quality conversational content for you."
+                        android:textColor="@color/purple_500"
+                        android:textSize="14sp"
+                        android:textStyle="italic" />
+
+                    <!-- Add the cancel generation button after the generation progress bar -->
+                    <Button
+                        android:id="@+id/cancel_generation_button"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Cancel"
+                        android:layout_marginTop="8dp"
+                        android:layout_marginBottom="8dp"
+                        android:visibility="gone"
+                        app:layout_constraintTop_toBottomOf="@id/generation_progress"
+                        app:layout_constraintStart_toStartOf="parent"
+                        app:layout_constraintEnd_toEndOf="parent"/>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <!-- Original generation status (will be replaced) -->
             <TextView
-                android:id="@+id/generation_status"
+                android:id="@+id/generation_status_old"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Generating podcast..."
-                android:textSize="14sp"
-                android:textColor="@color/purple_500"
                 android:textAlignment="center"
-                android:layout_marginTop="16dp"
-                android:visibility="gone"/>
+                android:textColor="@color/purple_700"
+                android:visibility="gone" />
 
             <ProgressBar
-                android:id="@+id/generation_progress"
-                style="@style/Widget.AppCompat.ProgressBar.Horizontal"
-                android:layout_width="match_parent"
+                android:id="@+id/generation_progress_old"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:visibility="gone"/>
+                android:layout_gravity="center"
+                android:visibility="gone" />
         </LinearLayout>
     </androidx.core.widget.NestedScrollView>
 
