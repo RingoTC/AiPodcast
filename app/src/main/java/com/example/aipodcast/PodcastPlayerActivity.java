@@ -124,6 +124,9 @@ public class PodcastPlayerActivity extends AppCompatActivity {
     private int currentPlayingSentenceIndex = -1;
     private String[] allSentences = new String[0];
     
+    // Add this field to track if the text has changed
+    private String lastProcessedText = "";
+    
     /**
      * 控制UI更新频率，避免频繁更新导致界面抖动
      * 
@@ -239,6 +242,12 @@ public class PodcastPlayerActivity extends AppCompatActivity {
         nextButton = findViewById(R.id.next_button);
         speedValueText = findViewById(R.id.speed_value);
         speedSlider = findViewById(R.id.speed_slider);
+        
+        // Set tooltips for the navigation buttons to indicate they jump 10 seconds
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            prevButton.setTooltipText("Back 10 seconds");
+            nextButton.setTooltipText("Forward 10 seconds");
+        }
     }
     
     /**
@@ -265,11 +274,19 @@ public class PodcastPlayerActivity extends AppCompatActivity {
         // Play/pause button
         playPauseButton.setOnClickListener(v -> togglePlayback());
         
-        // Previous button
-        prevButton.setOnClickListener(v -> skipToPreviousSegment());
+        // Previous button - now jumps back 10 seconds
+        prevButton.setOnClickListener(v -> {
+            skipToPreviousSegment();
+            // Show a toast to indicate the action
+            android.widget.Toast.makeText(this, "Back 10 seconds", android.widget.Toast.LENGTH_SHORT).show();
+        });
         
-        // Next button
-        nextButton.setOnClickListener(v -> skipToNextSegment());
+        // Next button - now jumps forward 10 seconds
+        nextButton.setOnClickListener(v -> {
+            skipToNextSegment();
+            // Show a toast to indicate the action
+            android.widget.Toast.makeText(this, "Forward 10 seconds", android.widget.Toast.LENGTH_SHORT).show();
+        });
         
         // Seek bar
         seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
@@ -321,17 +338,8 @@ public class PodcastPlayerActivity extends AppCompatActivity {
             public void onProgress(int currentPosition, int totalDuration, int segmentIndex) {
                 runOnUiThread(() -> {
                     if (segmentIndex != currentSegmentIndex) {
-                        // Segment changed, show feedback
+                        // Segment changed, update internal tracking
                         currentSegmentIndex = segmentIndex;
-                        highlightCurrentSegment();
-                    }
-                    
-                    if (podcastContent != null && segmentIndex < podcastContent.getSegments().size()) {
-                        PodcastSegment segment = podcastContent.getSegments().get(segmentIndex);
-                        currentSectionLabel.setText(segment.getTitle());
-                        
-                        // Update text with highlighting
-                        updateTranscriptWithHighlighting(segment.getText(), currentPlayingSentence);
                     }
                     
                     // Update seek bar and time displays
@@ -368,15 +376,14 @@ public class PodcastPlayerActivity extends AppCompatActivity {
             public void onWordSpoken(String word, int indexInSpeech) {
                 runOnUiThread(() -> {
                     // Use the word tracking to determine which sentence is currently being played
-                    if (podcastContent != null && currentSegmentIndex < podcastContent.getSegments().size()) {
-                        PodcastSegment segment = podcastContent.getSegments().get(currentSegmentIndex);
-                        String text = segment.getText();
+                    if (podcastContent != null) {
+                        String fullText = podcastContent.getFullText();
                         
                         // Find the current sentence based on word position
-                        String currentSentence = findSentenceContainingWord(text, word, indexInSpeech);
+                        String currentSentence = findSentenceContainingWord(fullText, word, indexInSpeech);
                         if (currentSentence != null && !currentSentence.equals(currentPlayingSentence)) {
                             currentPlayingSentence = currentSentence;
-                            updateTranscriptWithHighlighting(text, currentSentence);
+                            updateTranscriptWithHighlighting(fullText, currentSentence);
                             
                             // Auto-scroll to the highlighted sentence if user isn't manually scrolling
                             if (!userIsScrolling) {
@@ -397,9 +404,17 @@ public class PodcastPlayerActivity extends AppCompatActivity {
             return null;
         }
         
-        // Split text into sentences if not already done
-        if (allSentences.length == 0) {
-            allSentences = text.split("(?<=[.!?])\\s+");
+        // Split text into sentences if not already done or text has changed
+        if (allSentences.length == 0 || !text.equals(lastProcessedText)) {
+            // Better sentence splitting pattern that handles common abbreviations
+            allSentences = text.split("(?<=[.!?])(?=\\s+[A-Z]|\\s*$)");
+            lastProcessedText = text;
+        }
+        
+        // If we have very few sentences, this might be paragraph splitting instead
+        if (allSentences.length <= 3 && text.length() > 500) {
+            // Try to split by paragraphs instead
+            allSentences = text.split("\\n\\s*\\n");
         }
         
         // Count words to estimate which sentence we're in
@@ -461,16 +476,40 @@ public class PodcastPlayerActivity extends AppCompatActivity {
         }
         lastAutoScrollTime = currentTime;
         
-        // Calculate approximate scroll position based on sentence index
-        int totalHeight = transcriptText.getHeight();
-        int numSentences = allSentences.length;
-        
-        if (numSentences > 0 && totalHeight > 0) {
-            int approxPosition = (currentPlayingSentenceIndex * totalHeight) / numSentences;
+        // Find the text layout to calculate position
+        try {
+            // Get the text layout
+            android.text.Layout layout = transcriptText.getLayout();
+            if (layout != null) {
+                // Get the bounds of the current sentence in the text
+                String fullText = transcriptText.getText().toString();
+                int startOfSentence = fullText.indexOf(currentPlayingSentence);
+                
+                if (startOfSentence >= 0) {
+                    // Get the vertical position of this text
+                    int lineStart = layout.getLineForOffset(startOfSentence);
+                    int y = layout.getLineTop(lineStart);
+                    
+                    // Scroll to the position with some offset
+                    final int scrollTo = Math.max(0, y - 100);
+                    transcriptScrollView.smoothScrollTo(0, scrollTo);
+                    return;
+                }
+            }
             
-            // Scroll to the approximate position with some offset
-            int scrollPosition = Math.max(0, approxPosition - 100);
-            transcriptScrollView.smoothScrollTo(0, scrollPosition);
+            // Fallback to the approximation method if the layout method doesn't work
+            int totalHeight = transcriptText.getHeight();
+            int numSentences = allSentences.length;
+            
+            if (numSentences > 0 && totalHeight > 0) {
+                int approxPosition = (currentPlayingSentenceIndex * totalHeight) / numSentences;
+                
+                // Scroll to the approximate position with some offset
+                int scrollPosition = Math.max(0, approxPosition - 100);
+                transcriptScrollView.smoothScrollTo(0, scrollPosition);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error scrolling to sentence: " + e.getMessage());
         }
     }
     
@@ -704,63 +743,29 @@ public class PodcastPlayerActivity extends AppCompatActivity {
      * Skip to previous segment
      */
     private void skipToPreviousSegment() {
-        if (!isPodcastGenerated || podcastContent == null || podcastContent.getSegments().isEmpty()) {
+        if (!isPodcastGenerated || ttsHelper == null) {
             return;
         }
         
-        // Calculate previous segment index
-        int prevIndex = Math.max(0, currentSegmentIndex - 1);
-        
-        // If we're already near the start of the current segment, go to previous segment
-        // Otherwise, go to the start of the current segment
+        // Skip back 10 seconds
         int currentPosition = ttsHelper.getCurrentPosition();
-        if (currentPosition < 3000) { // If we're less than 3 seconds into current segment
-            seekToSegment(prevIndex);
-        } else {
-            seekToSegment(currentSegmentIndex); // Go to start of current segment
-        }
+        int newPosition = Math.max(0, currentPosition - 10000); // 10 seconds in milliseconds
+        ttsHelper.seekTo(newPosition);
     }
     
     /**
      * Skip to next segment
      */
     private void skipToNextSegment() {
-        if (!isPodcastGenerated || podcastContent == null || podcastContent.getSegments().isEmpty()) {
+        if (!isPodcastGenerated || ttsHelper == null) {
             return;
         }
         
-        int nextIndex = Math.min(currentSegmentIndex + 1, podcastContent.getSegments().size() - 1);
-        seekToSegment(nextIndex);
-    }
-    
-    /**
-     * Seek to a specific segment
-     * 
-     * @param segmentIndex Index of segment to seek to
-     */
-    private void seekToSegment(int segmentIndex) {
-        if (!isPodcastGenerated || ttsHelper == null) return;
-        
-        // Calculate position based on segment index
+        // Skip forward 10 seconds
+        int currentPosition = ttsHelper.getCurrentPosition();
         int totalDuration = ttsHelper.getTotalDuration();
-        float segmentProgress = (float) segmentIndex / podcastContent.getSegments().size();
-        int position = (int) (segmentProgress * totalDuration);
-        
-        // Seek to position
-        ttsHelper.seekTo(position);
-        currentSegmentIndex = segmentIndex;
-        
-        // Update UI
-        if (segmentIndex < podcastContent.getSegments().size()) {
-            PodcastSegment segment = podcastContent.getSegments().get(segmentIndex);
-            currentSectionLabel.setText(segment.getTitle());
-            
-            // 使用格式化的文本
-            String formattedText = formatTranscriptText(segment.getText());
-            transcriptText.setText(Html.fromHtml(formattedText, Html.FROM_HTML_MODE_COMPACT));
-            
-            highlightCurrentSegment();
-        }
+        int newPosition = Math.min(totalDuration, currentPosition + 10000); // 10 seconds in milliseconds
+        ttsHelper.seekTo(newPosition);
     }
     
     /**
@@ -918,11 +923,19 @@ public class PodcastPlayerActivity extends AppCompatActivity {
      */
     private void resetToBeginning() {
         currentSegmentIndex = 0;
-        if (podcastContent != null && !podcastContent.getSegments().isEmpty()) {
-            PodcastSegment segment = podcastContent.getSegments().get(0);
-            currentSectionLabel.setText(segment.getTitle());
-            String formattedText = formatTranscriptText(segment.getText());
-            transcriptText.setText(android.text.Html.fromHtml(formattedText, android.text.Html.FROM_HTML_MODE_COMPACT));
+        currentPlayingSentenceIndex = -1;
+        currentPlayingSentence = "";
+        
+        // Reset the highlighted text by showing the full text without highlighting
+        if (podcastContent != null) {
+            String fullText = podcastContent.getFullText();
+            String formattedText = formatTranscriptText(fullText);
+            transcriptText.setText(Html.fromHtml(formattedText, Html.FROM_HTML_MODE_COMPACT));
+            
+            // Scroll back to the top
+            if (transcriptScrollView != null) {
+                transcriptScrollView.smoothScrollTo(0, 0);
+            }
         }
     }
     
@@ -1137,14 +1150,15 @@ public class PodcastPlayerActivity extends AppCompatActivity {
         // Show player controls
         findViewById(R.id.player_controls).setVisibility(View.VISIBLE);
         
-        // Set initial segment text
-        if (podcastContent != null && !podcastContent.getSegments().isEmpty()) {
-            PodcastSegment segment = podcastContent.getSegments().get(0);
-            currentSectionLabel.setText(segment.getTitle());
-            
-            // 使用格式化的文本
-            String formattedText = formatTranscriptText(segment.getText());
+        // Show the full podcast transcript in a single scrollable view
+        if (podcastContent != null) {
+            // Get the complete transcript text
+            String fullText = podcastContent.getFullText();
+            String formattedText = formatTranscriptText(fullText);
             transcriptText.setText(Html.fromHtml(formattedText, Html.FROM_HTML_MODE_COMPACT));
+            
+            // Set the section label to the podcast title
+            currentSectionLabel.setText(podcastContent.getTitle());
         }
     }
     
@@ -1159,9 +1173,15 @@ public class PodcastPlayerActivity extends AppCompatActivity {
             return "";
         }
         
-        // Simple formatting - wrap sentences in paragraph tags for better readability
+        // Clean up the text by removing any HTML that might be present
+        String cleanText = text.replaceAll("<[^>]*>", "");
+        
+        // Add proper paragraph spacing
+        cleanText = cleanText.replaceAll("(?m)^\\s*$", "<br/>");
+        
+        // Add spacing between sentences for better readability
         StringBuilder formatted = new StringBuilder();
-        String[] sentences = text.split("(?<=[.!?])\\s+");
+        String[] sentences = cleanText.split("(?<=[.!?])\\s+");
         
         for (String sentence : sentences) {
             if (!sentence.trim().isEmpty()) {
@@ -1169,7 +1189,12 @@ public class PodcastPlayerActivity extends AppCompatActivity {
             }
         }
         
-        return formatted.toString();
+        // Ensure good spacing between paragraphs
+        String result = formatted.toString()
+            .replaceAll("\\n\\s*\\n", "<br/><br/>")
+            .replaceAll("\\n", "<br/>");
+        
+        return result;
     }
     
     @Override
