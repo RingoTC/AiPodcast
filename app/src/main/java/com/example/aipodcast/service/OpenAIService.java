@@ -155,15 +155,22 @@ public class OpenAIService {
         prompt.append("Create a podcast script where you discuss today's news in an engaging, informative manner. ");
         
         // Target duration info
-        int averageWordsPerMinute = 150;
+        int averageWordsPerMinute = 190;
         int targetWordCount = durationMinutes * averageWordsPerMinute;
-        prompt.append("Your response should be about ").append(targetWordCount).append(" words ");
-        prompt.append("to fill approximately ").append(durationMinutes).append(" minutes of speaking time. ");
+        prompt.append("EXTREMELY IMPORTANT: Your response MUST contain approximately ").append(targetWordCount).append(" words ");
+        prompt.append("to fill ").append(durationMinutes).append(" minutes of speaking time. ");
+        prompt.append("RESPONSE LENGTH IS CRITICAL - I need exactly ").append(durationMinutes).append(" minutes of content, ");
+        prompt.append("no more, no less. Short responses are unacceptable and will not meet requirements. ");
         
         // Topic preferences
         if (topics != null && !topics.isEmpty()) {
             prompt.append("Focus on these topics: ").append(String.join(", ", topics)).append(". ");
         }
+        
+        // Add clear word count requirements
+        prompt.append("To reiterate: aim for ").append(targetWordCount).append(" words (about ").append(targetWordCount/5).append(" seconds of speech). ");
+        prompt.append("Be thorough and detailed in your coverage of each article. Do not abbreviate or summarize. ");
+        prompt.append("Include comprehensive discussion, background context, and analysis for each news item. ");
         
         // Styling guidance with special markers - 使用单一HOST标记
         prompt.append("IMPORTANT: Use special markers to indicate speaker paragraphs as follows:\n");
@@ -193,6 +200,10 @@ public class OpenAIService {
         // Response format instructions
         prompt.append("Return the podcast as plain text without additional formatting or markdown.\n");
         prompt.append("Remember to use §HOST§ to indicate the start of each paragraph.\n");
+        
+        // Add this additional instruction after the explanation part
+        prompt.append("Make sure your response has enough content to fill the requested duration of ").append(durationMinutes)
+              .append(" minutes. Include detailed explanations and complete coverage of each news story. ");
         
         return prompt.toString();
     }
@@ -405,11 +416,11 @@ public class OpenAIService {
     }
     
     /**
-     * Convert the API response to a PodcastContent object
+     * Convert OpenAI API response to structured PodcastContent
      * 
      * @param jsonResponse Raw JSON response from API
-     * @param topics List of topics
-     * @param podcastTitle The podcast title
+     * @param topics List of podcast topics
+     * @param podcastTitle Title for the podcast
      * @return Structured PodcastContent
      */
     private PodcastContent convertResponseToPodcastContent(String jsonResponse, List<String> topics, String podcastTitle) {
@@ -418,62 +429,139 @@ public class OpenAIService {
             OpenAIResponse openAIResponse = gson.fromJson(jsonResponse, OpenAIResponse.class);
             String content = openAIResponse.getChoices().get(0).getMessage().getContent();
             
-            // Check if the content contains JSON
+            Log.d(TAG, "Received content from OpenAI API");
+            
+            // Check if the content contains our special §HOST§ markers
+            if (content.contains("§HOST§")) {
+                Log.d(TAG, "Detected §HOST§ markers in content - using direct format parsing");
+                // This is a correctly formatted response with our markers, use it directly
+                return createPodcastContentFromMarkedText(content, topics, podcastTitle);
+            }
+            
+            // If no markers, check if it's JSON format
             if (content.contains("{") && content.contains("}")) {
-                // Extract JSON part if it's embedded in text (like with code blocks)
-                int jsonStart = content.indexOf('{');
-                int jsonEnd = content.lastIndexOf('}') + 1;
-                if (jsonStart >= 0 && jsonEnd > jsonStart) {
-                    content = content.substring(jsonStart, jsonEnd);
+                try {
+                    // Extract JSON part if it's embedded in text (like with code blocks)
+                    int jsonStart = content.indexOf('{');
+                    int jsonEnd = content.lastIndexOf('}') + 1;
+                    if (jsonStart >= 0 && jsonEnd > jsonStart) {
+                        String jsonContent = content.substring(jsonStart, jsonEnd);
+                        
+                        // Parse the JSON content returned by GPT
+                        PodcastResponseContent responseContent = gson.fromJson(jsonContent, PodcastResponseContent.class);
+                        
+                        // Validate the parsed content
+                        if (responseContent != null && responseContent.getIntro() != null) {
+                            // Create a new PodcastContent
+                            PodcastContent podcastContent = new PodcastContent(podcastTitle, topics);
+                            
+                            // Add introduction segment
+                            podcastContent.addSegment(
+                                new PodcastSegment("Introduction", responseContent.getIntro(), PodcastSegment.SegmentType.INTRO)
+                            );
+                            
+                            // Add news segments
+                            if (responseContent.getSegments() != null) {
+                                for (PodcastSegmentContent segment : responseContent.getSegments()) {
+                                    podcastContent.addSegment(
+                                        new PodcastSegment(segment.getTitle(), segment.getContent(), PodcastSegment.SegmentType.NEWS_ARTICLE)
+                                    );
+                                }
+                            }
+                            
+                            // Add conclusion segment
+                            podcastContent.addSegment(
+                                new PodcastSegment("Conclusion", responseContent.getConclusion(), PodcastSegment.SegmentType.CONCLUSION)
+                            );
+                            
+                            return podcastContent;
+                        }
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "Error parsing JSON content: " + e.getMessage());
+                    // Fall through to next methods
                 }
             }
             
-            Log.d(TAG, "Parsed content from GPT: " + content);
+            // If we get here, use the content directly
+            return createFallbackPodcastContent(content, topics, podcastTitle);
             
-            // Parse the JSON content returned by GPT
-            PodcastResponseContent responseContent;
-            try {
-                responseContent = gson.fromJson(content, PodcastResponseContent.class);
+        } catch (Exception e) {
+            Log.e(TAG, "Error parsing API response: " + e.getMessage());
+            // Create a more user-friendly fallback
+            return createFallbackPodcastContent(jsonResponse, topics, podcastTitle);
+        }
+    }
+    
+    /**
+     * Create podcast content directly from text with §HOST§ markers
+     * 
+     * @param markedText Text with §HOST§ markers
+     * @param topics List of topics
+     * @param podcastTitle The podcast title
+     * @return Structured PodcastContent
+     */
+    private PodcastContent createPodcastContentFromMarkedText(String markedText, List<String> topics, String podcastTitle) {
+        PodcastContent podcastContent = new PodcastContent(podcastTitle, topics);
+        
+        try {
+            // Split the text by paragraphs 
+            String[] paragraphs = markedText.split("§HOST§");
+            
+            // First paragraph is usually empty because of the split
+            int startIndex = (paragraphs.length > 0 && paragraphs[0].trim().isEmpty()) ? 1 : 0;
+            
+            // Process each paragraph
+            if (paragraphs.length > startIndex) {
+                // First paragraph as introduction
+                String introText = paragraphs[startIndex].trim();
+                podcastContent.addSegment(
+                    new PodcastSegment("Introduction", introText, PodcastSegment.SegmentType.INTRO)
+                );
                 
-                // Validate the parsed content
-                if (responseContent == null || responseContent.getIntro() == null) {
-                    throw new Exception("Invalid JSON format from GPT");
+                // Middle paragraphs as news segments
+                for (int i = startIndex + 1; i < paragraphs.length - 1; i++) {
+                    String segmentText = paragraphs[i].trim();
+                    if (!segmentText.isEmpty()) {
+                        String segmentTitle = "Segment " + (i - startIndex);
+                        podcastContent.addSegment(
+                            new PodcastSegment(segmentTitle, segmentText, PodcastSegment.SegmentType.NEWS_ARTICLE)
+                        );
+                    }
                 }
-            } catch (Exception e) {
-                Log.e(TAG, "Error parsing JSON content: " + e.getMessage());
-                // Fallback to generating a default structure from the raw content
-                return createFallbackPodcastContent(content, topics, podcastTitle);
-            }
-            
-            // Create a new PodcastContent
-            PodcastContent podcastContent = new PodcastContent(podcastTitle, topics);
-            
-            // Add introduction segment
-            podcastContent.addSegment(
-                new PodcastSegment("Introduction", responseContent.getIntro(), PodcastSegment.SegmentType.INTRO)
-            );
-            
-            // Add news segments
-            if (responseContent.getSegments() != null) {
-                for (PodcastSegmentContent segment : responseContent.getSegments()) {
+                
+                // Last paragraph as conclusion
+                if (paragraphs.length > startIndex + 1) {
+                    String conclusionText = paragraphs[paragraphs.length - 1].trim();
                     podcastContent.addSegment(
-                        new PodcastSegment(segment.getTitle(), segment.getContent(), PodcastSegment.SegmentType.NEWS_ARTICLE)
+                        new PodcastSegment("Conclusion", conclusionText, PodcastSegment.SegmentType.CONCLUSION)
                     );
                 }
+            } else {
+                // If splitting didn't work well, just add the whole text as one segment
+                podcastContent.addSegment(
+                    new PodcastSegment("AI Generated Content", markedText, PodcastSegment.SegmentType.NEWS_ARTICLE)
+                );
             }
             
-            // Add conclusion segment
-            podcastContent.addSegment(
-                new PodcastSegment("Conclusion", responseContent.getConclusion(), PodcastSegment.SegmentType.CONCLUSION)
-            );
+            // If we somehow ended up with no segments, add a fallback segment
+            if (podcastContent.getSegments().isEmpty()) {
+                podcastContent.addSegment(
+                    new PodcastSegment("AI Generated Content", markedText, PodcastSegment.SegmentType.NEWS_ARTICLE)
+                );
+            }
             
             return podcastContent;
             
         } catch (Exception e) {
-            Log.e(TAG, "Error parsing API response: " + e.getMessage());
+            Log.e(TAG, "Error processing marked text: " + e.getMessage());
             
-            // Create a more user-friendly fallback
-            return createFallbackPodcastContent(jsonResponse, topics, podcastTitle);
+            // Fallback: add the entire content as one segment
+            podcastContent.addSegment(
+                new PodcastSegment("AI Generated Content", markedText, PodcastSegment.SegmentType.NEWS_ARTICLE)
+            );
+            
+            return podcastContent;
         }
     }
     
@@ -487,6 +575,11 @@ public class OpenAIService {
      */
     private PodcastContent createFallbackPodcastContent(String rawContent, List<String> topics, String podcastTitle) {
         PodcastContent fallbackContent = new PodcastContent(podcastTitle, topics);
+        
+        // First check if content contains our special markers
+        if (rawContent.contains("§HOST§")) {
+            return createPodcastContentFromMarkedText(rawContent, topics, podcastTitle);
+        }
         
         // Try to extract conversation parts if they exist
         String conversationContent = extractConversationFromRawText(rawContent);
@@ -518,12 +611,18 @@ public class OpenAIService {
     
     /**
      * Extract conversation format from raw text
-     * Tries to find HOST: patterns
+     * Tries to find HOST markers
      */
     private String extractConversationFromRawText(String rawText) {
         StringBuilder formattedConversation = new StringBuilder();
         
         try {
+            // First check for our special §HOST§ format
+            if (rawText.contains("§HOST§")) {
+                // Clean up any extra markers and return the text directly
+                return rawText.replace("§HOST§", "HOST: ").trim();
+            }
+            
             // Check if it contains JSON with conversation parts
             if (rawText.contains("\"content\":")) {
                 // Try to extract content
@@ -543,12 +642,12 @@ public class OpenAIService {
             }
             
             // Check for conversation format directly
-            if (rawText.contains("HOST:") || rawText.contains("HOST:")) {
+            if (rawText.contains("HOST:") || rawText.contains("Host:")) {
                 // Split by lines and format nicely
                 String[] lines = rawText.split("\\r?\\n");
                 for (String line : lines) {
                     line = line.trim();
-                    if (line.startsWith("HOST:") || line.startsWith("HOST:")) {
+                    if (line.startsWith("HOST:") || line.startsWith("Host:")) {
                         formattedConversation.append(line).append("\n\n");
                     } else if (!line.isEmpty()) {
                         formattedConversation.append(line).append("\n");

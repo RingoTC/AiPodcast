@@ -67,9 +67,11 @@ public class PodcastGenerator {
         if (useAI && openAIService != null) {
             // Use AI-generated conversational content
             String title = createPodcastTitle();
+            Log.d(TAG, "Generating AI podcast with target duration: " + targetDuration + " minutes");
             return openAIService.generatePodcastContent(selectedArticles, topics, targetDuration, title);
         } else {
             // Use template-based content (original implementation)
+            Log.d(TAG, "Generating template podcast with target duration: " + targetDuration + " minutes");
             return CompletableFuture.supplyAsync(this::generateContent);
         }
     }

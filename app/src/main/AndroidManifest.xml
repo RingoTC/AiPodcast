@@ -60,12 +60,5 @@
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 
-        <!-- Media Player Service -->
-        <service
-            android:name=".service.MediaPlayerService"
-            android:enabled="true"
-            android:exported="false"
-            android:foregroundServiceType="mediaPlayback" />
-
     </application>
 </manifest>

@@ -31,7 +31,7 @@ import com.example.aipodcast.adapter.NewsAdapter;
 import com.example.aipodcast.model.NewsArticle;
 import com.example.aipodcast.repository.NewsRepository;
 import com.example.aipodcast.repository.NewsRepositoryProvider;
-import com.example.aipodcast.service.TextToSpeechHelper;
+import com.example.aipodcast.service.SimplifiedTTSHelper;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.chip.Chip;
@@ -65,7 +65,7 @@ public class InputActivity extends AppCompatActivity {
     private MaterialCardView searchCard;
     private TextView timeLabel;
     private int selectedTime = 0;
-    private TextToSpeechHelper ttsHelper;
+    private SimplifiedTTSHelper ttsHelper;
     private com.google.android.material.floatingactionbutton.FloatingActionButton generatePodcastFab;
     private com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton selectModeButton;
     private boolean isPodcastMode = false;
@@ -226,7 +226,11 @@ public class InputActivity extends AppCompatActivity {
         try {
             Intent intent = new Intent(this, PodcastPlayerActivity.class);
             intent.putStringArrayListExtra("selected_topics", selectedTopics);
+            
+            // 修改：确保传递正确的duration参数
             intent.putExtra("duration", duration);
+            Log.d(TAG, "Sending podcast duration to PodcastPlayerActivity: " + duration + " minutes");
+            
             intent.putExtra("use_ai_generation", useAIGeneration);
             
             // 修改：使用ArrayList，不尝试直接传递Set

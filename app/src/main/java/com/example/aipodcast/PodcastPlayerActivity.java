@@ -152,6 +152,7 @@ public class PodcastPlayerActivity extends AppCompatActivity {
         duration = intent.getIntExtra("duration", 5);
         Log.d(TAG, "Received podcast duration: " + duration + " minutes");
         // 使用传入的AI生成设置，不再强制关闭
+        Log.d(TAG, "Received podcast duration: " + duration + " minutes");
         useAIGeneration = intent.getBooleanExtra("use_ai_generation", false);
         Log.d(TAG, "Using AI generation: " + useAIGeneration);
         useStreamingMode = false; // We still don't use streaming mode
@@ -288,27 +289,51 @@ public class PodcastPlayerActivity extends AppCompatActivity {
             android.widget.Toast.makeText(this, "Forward 10 seconds", android.widget.Toast.LENGTH_SHORT).show();
         });
         
-        // Seek bar
+        // Seek bar - improved for better responsiveness
         seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            private int userSelectedPosition = 0;
+            
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
                 if (fromUser) {
+                    userSelectedPosition = progress;
+                    // Update the time display immediately to provide feedback
                     updateCurrentTimeText(progress);
+                    
+                    // Log user seeking
+                    Log.d(TAG, "User seeking to position: " + progress + "s");
                 }
             }
             
             @Override
             public void onStartTrackingTouch(SeekBar seekBar) {
-                // Pause updates while seeking
+                // Pause updates while seeking to prevent jumpy UI
                 isSeekBarTracking = true;
+                userSelectedPosition = seekBar.getProgress();
+                Log.d(TAG, "Started tracking seek at: " + userSelectedPosition + "s");
             }
             
             @Override
             public void onStopTrackingTouch(SeekBar seekBar) {
+                // Get final position after user finishes dragging
+                int seekPosition = seekBar.getProgress();
+                Log.d(TAG, "Seeking to position: " + seekPosition + "s");
+                
                 // Seek to position when user stops dragging
                 if (ttsHelper != null && isPodcastGenerated) {
-                    ttsHelper.seekTo(seekBar.getProgress() * 1000); // Convert to milliseconds
+                    // Convert to milliseconds for TTS engine
+                    int seekPositionMs = seekPosition * 1000;
+                    ttsHelper.seekTo(seekPositionMs);
+                    
+                    // Reset current sentence tracking
+                    currentPlayingSentenceIndex = -1;
+                    currentPlayingSentence = "";
+                    
+                    // Force immediate UI update
+                    updateCurrentTimeText(seekPosition);
                 }
+                
+                // Resume progress updates
                 isSeekBarTracking = false;
             }
         });
@@ -342,10 +367,12 @@ public class PodcastPlayerActivity extends AppCompatActivity {
                         currentSegmentIndex = segmentIndex;
                     }
                     
-                    // Update seek bar and time displays
-                    seekBar.setProgress(currentPosition / 1000); // Convert to seconds
-                    updateCurrentTimeText(currentPosition / 1000);
-                    updateTotalTimeText(totalDuration / 1000);
+                    // Update seek bar and time displays if not being dragged by user
+                    if (!isSeekBarTracking) {
+                        seekBar.setProgress(currentPosition / 1000); // Convert to seconds
+                        updateCurrentTimeText(currentPosition / 1000);
+                        updateTotalTimeText(totalDuration / 1000);
+                    }
                 });
             }
             
@@ -370,18 +397,41 @@ public class PodcastPlayerActivity extends AppCompatActivity {
             }
         });
         
-        // Add word tracking callback to highlight sentences
+        // Add word tracking callback with improved handling
         ttsHelper.setWordTrackingCallback(new SimplifiedTTSHelper.WordTrackingCallback() {
+            private long lastProcessedTime = 0;
+            private static final long WORD_PROCESSING_THROTTLE_MS = 300;
+            
             @Override
             public void onWordSpoken(String word, int indexInSpeech) {
+                // Throttle processing to avoid excessive updates
+                long currentTime = System.currentTimeMillis();
+                if (currentTime - lastProcessedTime < WORD_PROCESSING_THROTTLE_MS) {
+                    return;
+                }
+                lastProcessedTime = currentTime;
+                
                 runOnUiThread(() -> {
                     // Use the word tracking to determine which sentence is currently being played
                     if (podcastContent != null) {
                         String fullText = podcastContent.getFullText();
                         
+                        // Skip common words that might cause false positives
+                        if (word == null || word.length() <= 1 || 
+                            word.equals("the") || word.equals("and") || 
+                            word.equals("a") || word.equals("of")) {
+                            return;
+                        }
+                        
+                        // Log word information for debugging at intervals
+                        if (indexInSpeech % 10 == 0) {
+                            Log.d(TAG, "Word spoken: '" + word + "' at index " + indexInSpeech);
+                        }
+                        
                         // Find the current sentence based on word position
                         String currentSentence = findSentenceContainingWord(fullText, word, indexInSpeech);
                         if (currentSentence != null && !currentSentence.equals(currentPlayingSentence)) {
+                            Log.d(TAG, "New sentence detected at word index " + indexInSpeech);
                             currentPlayingSentence = currentSentence;
                             updateTranscriptWithHighlighting(fullText, currentSentence);
                             
@@ -409,25 +459,51 @@ public class PodcastPlayerActivity extends AppCompatActivity {
             // Better sentence splitting pattern that handles common abbreviations
             allSentences = text.split("(?<=[.!?])(?=\\s+[A-Z]|\\s*$)");
             lastProcessedText = text;
+            
+            // Log the number of sentences found for debugging
+            Log.d(TAG, "Split text into " + allSentences.length + " sentences");
+            
+            // If we have very few sentences, this might be paragraph splitting instead
+            if (allSentences.length <= 3 && text.length() > 500) {
+                // Try to split by paragraphs instead
+                allSentences = text.split("\\n\\s*\\n");
+                Log.d(TAG, "Switched to paragraph splitting, found " + allSentences.length + " paragraphs");
+            }
         }
         
-        // If we have very few sentences, this might be paragraph splitting instead
-        if (allSentences.length <= 3 && text.length() > 500) {
-            // Try to split by paragraphs instead
-            allSentences = text.split("\\n\\s*\\n");
+        // Improved approach: Use word count to estimate position more accurately
+        if (allSentences.length == 0) {
+            return null;
         }
         
         // Count words to estimate which sentence we're in
-        int wordCount = 0;
+        int totalWords = 0;
         for (int i = 0; i < allSentences.length; i++) {
-            String sentence = allSentences[i];
-            String[] wordsInSentence = sentence.split("\\s+");
+            String sentence = allSentences[i].trim();
+            if (sentence.isEmpty()) continue;
             
-            wordCount += wordsInSentence.length;
-            if (wordCount >= wordIndex) {
+            String[] wordsInSentence = sentence.split("\\s+");
+            int sentenceWordCount = wordsInSentence.length;
+            
+            // If this word index falls within this sentence's range
+            if (wordIndex >= totalWords && wordIndex < (totalWords + sentenceWordCount)) {
                 currentPlayingSentenceIndex = i;
+                Log.d(TAG, "Found sentence at index " + i + " for word index " + wordIndex);
                 return sentence;
             }
+            
+            totalWords += sentenceWordCount;
+        }
+        
+        // Fallback: If word count approach fails, use a proportional approach
+        if (wordIndex > 0) {
+            int estimatedSentenceIndex = Math.min(
+                (int)((wordIndex / (float)totalWords) * allSentences.length),
+                allSentences.length - 1
+            );
+            currentPlayingSentenceIndex = estimatedSentenceIndex;
+            Log.d(TAG, "Using estimated sentence index " + estimatedSentenceIndex + " for word index " + wordIndex);
+            return allSentences[estimatedSentenceIndex];
         }
         
         return null;
@@ -446,14 +522,26 @@ public class PodcastPlayerActivity extends AppCompatActivity {
         if (escapedSentence != null && !escapedSentence.isEmpty()) {
             escapedSentence = escapedSentence.replaceAll("([\\[\\]\\(\\)\\{\\}\\*\\+\\?\\^\\$\\\\\\.\\|])", "\\\\$1");
             
-            // Replace the sentence with highlighted version
-            String highlighted = fullText.replaceAll(
-                "(" + escapedSentence + ")", 
-                "<span style='background-color:#E6E6FA; color:#6200EE;'>$1</span>"
-            );
-            
-            // Display with HTML formatting
-            transcriptText.setText(Html.fromHtml(highlighted, Html.FROM_HTML_MODE_COMPACT));
+            try {
+                // Replace the sentence with highlighted version
+                String highlighted = fullText.replaceAll(
+                    "(" + escapedSentence + ")", 
+                    "<span style='background-color:#E6E6FA; color:#6200EE; font-weight:bold;'>$1</span>"
+                );
+                
+                // Display with HTML formatting
+                transcriptText.setText(Html.fromHtml(highlighted, Html.FROM_HTML_MODE_COMPACT));
+                
+                // Log highlighting for debugging
+                Log.d(TAG, "Updated highlighting for sentence (" + highlightedSentence.length() + " chars)");
+                
+                // Trigger automatic scrolling
+                scrollToHighlightedSentence();
+            } catch (Exception e) {
+                // If regex fails, fallback to simply showing the text
+                Log.e(TAG, "Error highlighting sentence: " + e.getMessage());
+                transcriptText.setText(fullText);
+            }
         } else {
             // No highlighting
             transcriptText.setText(fullText);
@@ -476,36 +564,54 @@ public class PodcastPlayerActivity extends AppCompatActivity {
         }
         lastAutoScrollTime = currentTime;
         
-        // Find the text layout to calculate position
         try {
             // Get the text layout
             android.text.Layout layout = transcriptText.getLayout();
             if (layout != null) {
                 // Get the bounds of the current sentence in the text
                 String fullText = transcriptText.getText().toString();
-                int startOfSentence = fullText.indexOf(currentPlayingSentence);
+                String currentSentence = allSentences[currentPlayingSentenceIndex];
+                
+                if (currentSentence == null || currentSentence.isEmpty()) {
+                    Log.d(TAG, "Cannot scroll - current sentence is empty");
+                    return;
+                }
+                
+                // Find the current sentence in the text
+                int startOfSentence = fullText.indexOf(currentSentence);
                 
                 if (startOfSentence >= 0) {
                     // Get the vertical position of this text
                     int lineStart = layout.getLineForOffset(startOfSentence);
                     int y = layout.getLineTop(lineStart);
                     
-                    // Scroll to the position with some offset
-                    final int scrollTo = Math.max(0, y - 100);
+                    // Calculate optimal scroll position (center the sentence in view)
+                    int scrollViewHeight = transcriptScrollView.getHeight();
+                    int scrollTo = Math.max(0, y - (scrollViewHeight / 4));
+                    
+                    // Log scroll position for debugging
+                    Log.d(TAG, "Scrolling to line " + lineStart + " at position " + scrollTo);
+                    
+                    // Smooth scroll to the position
                     transcriptScrollView.smoothScrollTo(0, scrollTo);
                     return;
                 }
+                
+                Log.d(TAG, "Sentence not found in text, using fallback scrolling method");
             }
             
             // Fallback to the approximation method if the layout method doesn't work
-            int totalHeight = transcriptText.getHeight();
-            int numSentences = allSentences.length;
-            
-            if (numSentences > 0 && totalHeight > 0) {
-                int approxPosition = (currentPlayingSentenceIndex * totalHeight) / numSentences;
+            if (allSentences.length > 0) {
+                float scrollProgress = (float) currentPlayingSentenceIndex / allSentences.length;
+                int totalHeight = transcriptText.getHeight();
+                int approximatePosition = (int)(scrollProgress * totalHeight);
                 
-                // Scroll to the approximate position with some offset
-                int scrollPosition = Math.max(0, approxPosition - 100);
+                // Add some offset to position highlighted text in view
+                int scrollPosition = Math.max(0, approximatePosition - 200);
+                
+                Log.d(TAG, "Using approximate scroll position: " + scrollPosition + 
+                      " (sentence " + currentPlayingSentenceIndex + " of " + allSentences.length + ")");
+                
                 transcriptScrollView.smoothScrollTo(0, scrollPosition);
             }
         } catch (Exception e) {
@@ -698,7 +804,7 @@ public class PodcastPlayerActivity extends AppCompatActivity {
         // Remove any existing callbacks
         stopProgressUpdates();
         
-        // Start updating progress more frequently
+        // Start updating progress more frequently for smoother UI
         progressHandler.post(new Runnable() {
             @Override
             public void run() {
@@ -713,7 +819,7 @@ public class PodcastPlayerActivity extends AppCompatActivity {
                     
                     // Continue updating regardless of playback state
                     // This ensures we catch when playback starts again
-                    progressHandler.postDelayed(this, 250); // Update every 250ms
+                    progressHandler.postDelayed(this, 100); // Update every 100ms for smoother progress
                 }
             }
         });
@@ -747,15 +853,21 @@ public class PodcastPlayerActivity extends AppCompatActivity {
             if (currentPosition >= 0 && totalDuration > 0) {
                 // Update seek bar
                 seekBar.setMax(totalDuration);
-                seekBar.setProgress(currentPosition);
+                
+                // Only update the progress if we're not tracking (user not dragging)
+                if (!isSeekBarTracking) {
+                    seekBar.setProgress(currentPosition);
+                }
                 
                 // Update time displays
                 updateCurrentTimeText(currentPosition);
                 updateTotalTimeText(totalDuration);
                 
-                // Log for debugging
-                Log.d(TAG, "Progress updated - position: " + currentPosition + 
-                      "s, duration: " + totalDuration + "s");
+                // Log position at less frequent intervals for debugging
+                if (currentPosition % 5 == 0) {
+                    Log.d(TAG, "Progress updated - position: " + currentPosition + 
+                          "s, duration: " + totalDuration + "s");
+                }
             }
         } catch (Exception e) {
             Log.e(TAG, "Error updating progress: " + e.getMessage());
@@ -763,32 +875,63 @@ public class PodcastPlayerActivity extends AppCompatActivity {
     }
     
     /**
-     * Skip to previous segment
+     * Skip to previous segment (actually skip back 10 seconds)
      */
     private void skipToPreviousSegment() {
         if (!isPodcastGenerated || ttsHelper == null) {
+            Log.w(TAG, "Cannot skip back: podcast not generated or TTS helper is null");
             return;
         }
         
-        // Skip back 10 seconds
-        int currentPosition = ttsHelper.getCurrentPosition();
-        int newPosition = Math.max(0, currentPosition - 10000); // 10 seconds in milliseconds
-        ttsHelper.seekTo(newPosition);
+        try {
+            // Use the skipBackward method with 10 seconds (10000 milliseconds)
+            ttsHelper.skipBackward(10000);
+            
+            // Update UI immediately to provide feedback
+            int currentPosition = ttsHelper.getCurrentPosition() / 1000; // Convert to seconds
+            seekBar.setProgress(currentPosition);
+            updateCurrentTimeText(currentPosition);
+            
+            // Force a progress update
+            updateProgress();
+            
+            // Reset current sentence highlighting
+            currentPlayingSentenceIndex = -1;
+            currentPlayingSentence = "";
+        } catch (Exception e) {
+            Log.e(TAG, "Error during skipToPreviousSegment: " + e.getMessage(), e);
+            showError("Skip error: " + e.getMessage());
+        }
     }
     
     /**
-     * Skip to next segment
+     * Skip to next segment (actually skip forward 10 seconds)
      */
     private void skipToNextSegment() {
         if (!isPodcastGenerated || ttsHelper == null) {
+            Log.w(TAG, "Cannot skip forward: podcast not generated or TTS helper is null");
             return;
         }
         
-        // Skip forward 10 seconds
-        int currentPosition = ttsHelper.getCurrentPosition();
-        int totalDuration = ttsHelper.getTotalDuration();
-        int newPosition = Math.min(totalDuration, currentPosition + 10000); // 10 seconds in milliseconds
-        ttsHelper.seekTo(newPosition);
+        try {
+            // Use the skipForward method with 10 seconds (10000 milliseconds)
+            ttsHelper.skipForward(10000);
+            
+            // Update UI immediately to provide feedback
+            int currentPosition = ttsHelper.getCurrentPosition() / 1000; // Convert to seconds
+            seekBar.setProgress(currentPosition);
+            updateCurrentTimeText(currentPosition);
+            
+            // Force a progress update
+            updateProgress();
+            
+            // Reset current sentence highlighting
+            currentPlayingSentenceIndex = -1;
+            currentPlayingSentence = "";
+        } catch (Exception e) {
+            Log.e(TAG, "Error during skipToNextSegment: " + e.getMessage(), e);
+            showError("Skip error: " + e.getMessage());
+        }
     }
     
     /**
@@ -800,94 +943,137 @@ public class PodcastPlayerActivity extends AppCompatActivity {
         
         if (!isPodcastGenerated) {
             Log.e(TAG, "Cannot toggle playback: podcast not yet generated");
-            showError("Podcast content is still being generated. Please wait.");
+            showError("播客内容仍在生成中，请稍候。");
             return;
         }
         
         if (podcastContent == null || podcastContent.getSegments().isEmpty()) {
             Log.e(TAG, "Cannot toggle playback: podcast content is null or empty");
-            showError("No podcast content available to play");
+            showError("没有可用的播客内容");
             return;
         }
         
-        // Ensure TTS is initialized before trying to play
-        if (!isTtsInitialized && !isPlaying) {
-            Log.e(TAG, "TTS not initialized yet, showing error");
-            showError("Text-to-speech engine is still initializing. Please try again in a moment.");
-            
-            // Try to re-initialize TTS if needed
-            if (ttsHelper == null) {
-                ttsHelper = new SimplifiedTTSHelper(this, success -> {
-                    isTtsInitialized = success;
-                    if (success) {
-                        Log.d(TAG, "TTS re-initialized successfully");
-                        setupProgressTracking();
-                        // Try playback again after successful initialization
-                        new Handler(Looper.getMainLooper()).postDelayed(this::togglePlayback, 500);
-                    }
-                });
+        // 如果正在播放，则暂停
+        if (isPlaying) {
+            Log.d(TAG, "Stopping playback");
+            if (ttsHelper != null) {
+                ttsHelper.stop();
             }
+            if (directSystemTTS != null) {
+                directSystemTTS.stop();
+            }
+            isPlaying = false;
+            stopProgressUpdates();
+            updatePlayButtonState(false);
             return;
         }
         
-        // If using streaming mode, use the chat playback toggle
+        // 尝试开始播放
+        
+        // 首先检查TTS引擎初始化状态
+        if (!isTtsInitialized) {
+            Log.e(TAG, "TTS not initialized yet, attempting to initialize");
+            showError("正在初始化文本转语音引擎，请稍候再试。");
+            
+            // 尝试重新初始化TTS
+            reInitializeTts();
+            return;
+        }
+        
+        // 如果是流媒体模式，使用聊天播放切换
         if (useStreamingMode && enhancedTTS != null) {
             toggleChatPlayback();
             return;
         }
         
-        // Standard playback toggle
-        if (isPlaying) {
-            // Currently playing, so pause
-            Log.d(TAG, "Stopping playback");
-            ttsHelper.stop();
-            isPlaying = false;
-            stopProgressUpdates();
-        } else {
-            // Currently paused, so play
-            Log.d(TAG, "Starting playback, audioFile=" + (audioFile != null ? "exists" : "null"));
-            
-            if (audioFile != null) {
+        // 标准播放切换 - 尝试播放
+        Log.d(TAG, "Starting playback, audioFile=" + (audioFile != null ? "exists" : "null"));
+        
+        try {
+            // 如果有音频文件，尝试播放文件
+            if (audioFile != null && audioFile.exists()) {
                 isPlaying = ttsHelper.playAudio(audioFile);
+                
+                if (!isPlaying) {
+                    Log.e(TAG, "Failed to play audio file");
+                    showError("播放音频文件失败");
+                    // 尝试直接朗读作为备选方案
+                    directSpeechPlayback();
+                }
             } else {
-                // Make sure ttsHelper is fully initialized
+                // 确保ttsHelper完全初始化
                 if (ttsHelper == null) {
-                    Log.e(TAG, "TTS Helper is null, re-initializing");
-                    ttsHelper = new SimplifiedTTSHelper(this, success -> {
-                        isTtsInitialized = success;
-                        setupProgressTracking();
-                    });
-                    showError("TTS service needed to be reinitialized. Please try playing again.");
+                    Log.e(TAG, "TTS Helper is null, reinitializing");
+                    reInitializeTts();
                     return;
                 }
                 
-                // Ensure TTS is initialized
-                Log.d(TAG, "Speaking podcast with " + podcastContent.getSegments().size() + " segments");
-                
-                try {
-                    isPlaying = ttsHelper.speakPodcast(podcastContent);
+                // 有播客内容，使用TTS朗读
+                if (podcastContent != null) {
+                    Log.d(TAG, "Speaking podcast with " + podcastContent.getSegments().size() + " segments");
                     
-                    if (!isPlaying) {
-                        // If standard TTS fails, try fallback to direct system TTS
-                        Log.e(TAG, "Failed to start podcast playback with standard TTS, trying fallback method");
+                    try {
+                        // 显示开始播放消息
+                        generationStatus.setText("正在准备播放...");
+                        generationStatus.setVisibility(View.VISIBLE);
+                        
+                        // Log content size for debugging
+                        String fullText = podcastContent.getFullText();
+                        if (fullText != null) {
+                            Log.d(TAG, "Podcast content size: " + fullText.length() + " characters");
+                        }
+                        
+                        // 延迟执行TTS，给UI有时间更新
+                        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                            try {
+                                // Check if podcast content is very large
+                                if (fullText != null && fullText.length() > 10000) {
+                                    Log.d(TAG, "Large podcast content detected (" + fullText.length() + 
+                                          " chars). Using chunked playback approach.");
+                                }
+                                
+                                isPlaying = ttsHelper.speakPodcast(podcastContent);
+                                
+                                // 更新UI以反映播放状态
+                                updatePlayButtonState(isPlaying);
+                                generationStatus.setVisibility(View.GONE);
+                                
+                                if (isPlaying) {
+                                    startProgressUpdates();
+                                } else {
+                                    // 如果标准TTS失败，尝试回退到直接系统TTS
+                                    Log.e(TAG, "Failed to start podcast playback with standard TTS, trying fallback");
+                                    fallbackToDirectSystemTTS();
+                                }
+                            } catch (Exception e) {
+                                Log.e(TAG, "Error during delayed TTS start: " + e.getMessage(), e);
+                                showError("播放错误: " + e.getMessage());
+                                isPlaying = false;
+                                updatePlayButtonState(false);
+                                generationStatus.setVisibility(View.GONE);
+                            }
+                        }, 300); // 短暂延迟300毫秒
+                    } catch (Exception e) {
+                        Log.e(TAG, "Exception trying to play podcast: " + e.getMessage(), e);
+                        showError("播放错误: " + e.getMessage());
+                        isPlaying = false;
+                        
+                        // 尝试使用系统TTS作为最后的回退选项
                         fallbackToDirectSystemTTS();
                     }
-                } catch (Exception e) {
-                    Log.e(TAG, "Exception trying to play podcast: " + e.getMessage(), e);
-                    showError("Playback error: " + e.getMessage());
-                    isPlaying = false;
+                } else {
+                    showError("没有播客内容可播放");
                 }
             }
+        } catch (Exception e) {
+            Log.e(TAG, "Unexpected error in togglePlayback: " + e.getMessage(), e);
+            showError("播放错误: " + e.getMessage());
+            isPlaying = false;
+            updatePlayButtonState(false);
             
-            if (isPlaying) {
-                startProgressUpdates();
-            } else {
-                Log.e(TAG, "Failed to start playback with all methods");
-                showTTSErrorDialog();
-            }
+            // 显示TTS故障排除对话框
+            showTTSErrorDialog();
         }
-        
-        updatePlayButtonState(isPlaying);
     }
     
     /**
@@ -916,7 +1102,15 @@ public class PodcastPlayerActivity extends AppCompatActivity {
      * @param seconds Current position in seconds
      */
     private void updateCurrentTimeText(int seconds) {
-        currentTimeText.setText(formatTime(seconds));
+        if (currentTimeText != null) {
+            String formattedTime = formatTime(seconds);
+            currentTimeText.setText(formattedTime);
+            
+            // Log time updates occasionally for debugging
+            if (seconds % 30 == 0) {
+                Log.d(TAG, "Current playback position: " + formattedTime);
+            }
+        }
     }
     
     /**
@@ -925,8 +1119,15 @@ public class PodcastPlayerActivity extends AppCompatActivity {
      * @param seconds Total duration in seconds
      */
     private void updateTotalTimeText(int seconds) {
-        totalTimeText.setText(formatTime(seconds));
-        seekBar.setMax(seconds);
+        if (totalTimeText != null && seekBar != null) {
+            String formattedTime = formatTime(seconds);
+            totalTimeText.setText(formattedTime);
+            
+            // Also update seekbar max to match total duration
+            seekBar.setMax(seconds);
+            
+            Log.d(TAG, "Total duration updated: " + formattedTime + " (" + seconds + "s)");
+        }
     }
     
     /**
@@ -936,9 +1137,22 @@ public class PodcastPlayerActivity extends AppCompatActivity {
      * @return Formatted time string
      */
     private String formatTime(int seconds) {
-        return String.format("%d:%02d", 
-                TimeUnit.SECONDS.toMinutes(seconds),
-                seconds % 60);
+        // Handle invalid input
+        if (seconds < 0) seconds = 0;
+        
+        // Format as MM:SS for short durations, or HH:MM:SS for longer
+        if (seconds >= 3600) {
+            // Format as HH:MM:SS for content longer than an hour
+            return String.format("%d:%02d:%02d", 
+                    TimeUnit.SECONDS.toHours(seconds),
+                    TimeUnit.SECONDS.toMinutes(seconds) % 60,
+                    seconds % 60);
+        } else {
+            // Format as MM:SS for content under an hour
+            return String.format("%d:%02d", 
+                    TimeUnit.SECONDS.toMinutes(seconds),
+                    seconds % 60);
+        }
     }
     
     /**
@@ -2064,77 +2278,170 @@ public class PodcastPlayerActivity extends AppCompatActivity {
      * Show dialog with TTS troubleshooting options
      */
     private void showTTSErrorDialog() {
-        // First attempt to check if system TTS is available and working
-        boolean systemTtsAvailable = checkSystemTtsAvailable();
+        // 检查是否已经显示了对话框，防止多次显示
+        if (isFinishing()) {
+            return;
+        }
         
+        // 收集设备和TTS信息以便调试
+        StringBuilder diagnosticInfo = new StringBuilder();
+        diagnosticInfo.append("设备: ").append(Build.MANUFACTURER).append(" ").append(Build.MODEL).append("\n");
+        diagnosticInfo.append("Android版本: ").append(Build.VERSION.RELEASE).append("\n");
+        
+        // 检查TTS引擎状态
+        boolean systemTtsAvailable = checkSystemTtsAvailable();
+        diagnosticInfo.append("系统TTS可用: ").append(systemTtsAvailable).append("\n");
+        
+        // 获取TTS引擎列表
+        String ttsEngines = "未知";
+        try {
+            String defaultEngine = null;
+            if (ttsHelper != null && ttsHelper.getTts() != null) {
+                defaultEngine = ttsHelper.getTts().getDefaultEngine();
+            } else if (directSystemTTS != null) {
+                defaultEngine = directSystemTTS.getDefaultEngine();
+            }
+            
+            if (defaultEngine != null) {
+                ttsEngines = defaultEngine;
+            }
+        } catch (Exception e) {
+            ttsEngines = "获取失败: " + e.getMessage();
+        }
+        diagnosticInfo.append("TTS引擎: ").append(ttsEngines).append("\n");
+        
+        // 记录诊断信息
+        Log.e(TAG, "TTS诊断信息: " + diagnosticInfo.toString());
+        
+        // 构建对话框信息
+        String dialogMessage;
+        if (systemTtsAvailable) {
+            dialogMessage = "TTS播放过程中出现错误。下列信息可能有助于解决问题：\n\n" +
+                "• 检查您的设备是否已安装完整的文本转语音引擎\n" +
+                "• 确保您已下载英语(美国)语言包\n" +
+                "• 尝试重启应用或设备\n" +
+                "• 检查设备音量是否已打开\n" +
+                "• 某些设备上的TTS引擎可能存在兼容性问题";
+        } else {
+            dialogMessage = "您的设备似乎没有可用的文本转语音引擎。要使用音频播放功能，请：\n\n" +
+                "• 在设备设置中安装或启用文本转语音引擎\n" +
+                "• 下载和安装Google文本转语音引擎\n" +
+                "• 下载英语(美国)语言包";
+        }
+        
+        // 创建并显示对话框
         new androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Failed to start playback")
-            .setMessage("There was a problem playing the podcast audio.\n\n" + 
-                       (systemTtsAvailable ? 
-                        "The system Text-to-Speech (TTS) engine appears to be available, but encountered an error with this content." : 
-                        "The system Text-to-Speech (TTS) engine may not be properly configured."))
-            .setPositiveButton("Try Again", (dialog, which) -> {
-                // Try a simpler method to play content
+            .setTitle("播放故障排除")
+            .setMessage(dialogMessage)
+            .setPositiveButton("重试", (dialog, which) -> {
+                // 尝试仅播放少量文本以测试TTS
                 if (podcastContent != null) {
                     try {
-                        // Use the simplest approach possible
+                        // 使用最简单的方法尝试播放
                         String shortContent = getShortSampleText();
                         if (ttsHelper != null) {
-                            ttsHelper.speak(shortContent);
+                            boolean success = ttsHelper.speak(shortContent);
+                            if (success) {
+                                isPlaying = true;
+                                updatePlayButtonState(true);
+                                startProgressUpdates();
+                            } else {
+                                // 如果简化TTS失败，尝试直接使用系统TTS
+                                fallbackToDirectSystemTTS();
+                            }
+                        } else {
+                            // 重新创建TTS
+                            reInitializeTts();
                         }
                     } catch (Exception e) {
-                        showError("Could not initialize TTS: " + e.getMessage());
+                        showError("重试TTS失败: " + e.getMessage());
                     }
                 }
             })
-            .setNeutralButton("TTS Settings", (dialog, which) -> {
+            .setNeutralButton("TTS设置", (dialog, which) -> {
                 try {
-                    // Try to open Android's TTS settings
+                    // 尝试打开TTS设置
                     Intent intent = new Intent();
                     intent.setAction("com.android.settings.TTS_SETTINGS");
                     intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                     startActivity(intent);
                 } catch (Exception e) {
+                    Log.e(TAG, "无法打开TTS设置: " + e.getMessage());
+                    
                     try {
-                        // Alternative way to open TTS settings
+                        // 备用方法，打开辅助功能设置
                         Intent intent = new Intent();
                         intent.setAction(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS);
                         startActivity(intent);
                     } catch (Exception e2) {
-                        showError("Could not open settings");
+                        showError("无法打开设置，请手动进入系统设置 > 辅助功能 > 文本转语音");
                     }
                 }
             })
-            .setNegativeButton("Read Text Only", (dialog, which) -> {
-                // Just show transcript without audio
+            .setNegativeButton("仅阅读文本", (dialog, which) -> {
+                // 不使用音频，仅显示文本
                 transcriptText.setVisibility(View.VISIBLE);
                 if (hostContainer != null) {
                     hostContainer.setVisibility(View.GONE);
                 }
-                currentWordIndicator.setText("Audio playback unavailable. Reading transcript only.");
+                currentWordIndicator.setText("音频播放不可用。正在以文本形式显示内容。");
                 
-                // Show a snackbar with instructions
+                // 提示用户可以阅读文本
                 Snackbar.make(
                     findViewById(android.R.id.content),
-                    "You can now read the podcast transcript directly.",
+                    "您现在可以直接阅读播客文本内容。",
                     Snackbar.LENGTH_LONG
                 ).show();
+                
+                // 将焦点设置到滚动视图
+                if (transcriptScrollView != null) {
+                    transcriptScrollView.requestFocus();
+                    transcriptScrollView.scrollTo(0, 0);
+                }
             })
+            .setCancelable(true)
             .show();
-        
-        // 初始化检查TTS是否可用
-        TextToSpeech testTts = null;
-        try {
-            testTts = new TextToSpeech(this, status -> {
-                // 不需要在这里处理Status，只是检查TTS是否可以初始化
-            });
-        } catch (Exception e) {
-            Log.e(TAG, "Error creating test TTS: " + e.getMessage());
-        } finally {
-            if (testTts != null) {
-                testTts.shutdown(); // Clean up
-            }
+    }
+    
+    /**
+     * 重新初始化TTS引擎
+     */
+    private void reInitializeTts() {
+        // 确保旧的实例被清理
+        if (ttsHelper != null) {
+            ttsHelper.shutdown();
+            ttsHelper = null;
         }
+        
+        // 创建新的TTS实例
+        ttsHelper = new SimplifiedTTSHelper(this, new SimplifiedTTSHelper.InitCallback() {
+            @Override
+            public void onInitialized(boolean success) {
+                isTtsInitialized = success;
+                if (!success) {
+                    Log.e(TAG, "重新初始化TTS失败");
+                    runOnUiThread(() -> showError("无法初始化文本转语音。请检查系统设置。"));
+                } else {
+                    Log.d(TAG, "TTS重新初始化成功");
+                    // 重新设置回调
+                    setupProgressTracking();
+                    
+                    // 尝试播放
+                    runOnUiThread(() -> {
+                        String shortContent = getShortSampleText();
+                        boolean playSuccess = ttsHelper.speak(shortContent);
+                        if (playSuccess) {
+                            isPlaying = true;
+                            updatePlayButtonState(true);
+                            startProgressUpdates();
+                        } else {
+                            // 尝试回退方案
+                            fallbackToDirectSystemTTS();
+                        }
+                    });
+                }
+            }
+        });
     }
     
     /**
@@ -2271,10 +2578,25 @@ public class PodcastPlayerActivity extends AppCompatActivity {
         // Create a simplified PodcastContent object
         PodcastContent content = new PodcastContent();
         content.setTitle(podcastTitle.getText().toString());
-        // Don't need to set duration directly, it will be calculated from segments
         
-        // Get duration from preference or default
-        int estimatedDuration = Math.max(120, duration * 60); // At least 2 minutes
+        // Calculate duration based on word count instead of using a fixed value
+        String[] words = transcript.split("\\s+");
+        int wordCount = words.length;
+        
+        // Use 2.5 words per second (150 words per minute) for duration estimation
+        float wordsPerSecond = 2.5f;
+        int calculatedDuration = Math.round(wordCount / wordsPerSecond);
+        
+        // Ensure minimum duration (at least 80% of requested duration or 3 minutes minimum)
+        int requestedDurationSeconds = duration * 60;
+        int minimumDuration = Math.max(requestedDurationSeconds * 8 / 10, 180);
+        
+        // Use calculated or minimum duration, whichever is greater
+        int estimatedDuration = Math.max(calculatedDuration, minimumDuration);
+        Log.d(TAG, "Transcript word count: " + wordCount + 
+              ", Calculated duration: " + calculatedDuration + 
+              "s, Using duration: " + estimatedDuration + "s");
+        
         content.setTotalDuration(estimatedDuration);
         
         // Set transcript text
@@ -2285,6 +2607,9 @@ public class PodcastPlayerActivity extends AppCompatActivity {
         segment.setTitle("Podcast");
         segment.setText(transcript);
         segment.setType(PodcastSegment.SegmentType.NEWS_ARTICLE);
+        
+        // Manually set the estimated duration to match our calculation
+        segment.setEstimatedDuration(estimatedDuration);
         
         // Add the segment to the content
         List<PodcastSegment> segments = new ArrayList<>();
@@ -2442,11 +2767,38 @@ public class PodcastPlayerActivity extends AppCompatActivity {
      */
     private void fallbackToDirectSystemTTS() {
         try {
+            // 记录日志表明我们正在尝试回退到系统TTS
+            Log.d(TAG, "Falling back to direct system TTS");
+            
             // 创建一个简短的测试内容
             String content = getShortSampleText();
+            
+            // 如果已存在实例，先清理
+            if (directSystemTTS != null) {
+                try {
+                    directSystemTTS.stop();
+                    directSystemTTS.shutdown();
+                    directSystemTTS = null;
+                } catch (Exception e) {
+                    Log.e(TAG, "Error shutting down previous TTS instance: " + e.getMessage());
+                }
+            }
+            
+            // 使用标准初始化逻辑
             directSystemTTS = new TextToSpeech(this, status -> {
                 if (status == TextToSpeech.SUCCESS) {
-                    directSystemTTS.setLanguage(Locale.US);
+                    Log.d(TAG, "Direct TTS initialized successfully");
+                    
+                    // 检查并设置最佳语言
+                    int langResult = directSystemTTS.setLanguage(Locale.US);
+                    if (langResult == TextToSpeech.LANG_MISSING_DATA || 
+                        langResult == TextToSpeech.LANG_NOT_SUPPORTED) {
+                        showError("TTS language data is missing or not supported. Please install English language pack.");
+                        return;
+                    }
+                    
+                    // 设置语速为正常
+                    directSystemTTS.setSpeechRate(1.0f);
                     
                     // 注册监听器
                     directSystemTTS.setOnUtteranceProgressListener(new UtteranceProgressListener() {
@@ -2455,6 +2807,7 @@ public class PodcastPlayerActivity extends AppCompatActivity {
                             runOnUiThread(() -> {
                                 isPlaying = true;
                                 updatePlayButtonState(true);
+                                Log.d(TAG, "Direct TTS started playback");
                             });
                         }
                         
@@ -2463,6 +2816,7 @@ public class PodcastPlayerActivity extends AppCompatActivity {
                             runOnUiThread(() -> {
                                 isPlaying = false;
                                 updatePlayButtonState(false);
+                                Log.d(TAG, "Direct TTS playback completed");
                             });
                         }
                         
@@ -2471,7 +2825,8 @@ public class PodcastPlayerActivity extends AppCompatActivity {
                             runOnUiThread(() -> {
                                 isPlaying = false;
                                 updatePlayButtonState(false);
-                                showError("TTS playback error");
+                                showError("TTS playback error: " + utteranceId);
+                                Log.e(TAG, "Direct TTS error: " + utteranceId);
                             });
                         }
                     });
@@ -2479,21 +2834,64 @@ public class PodcastPlayerActivity extends AppCompatActivity {
                     // 开始播放
                     String utteranceId = "directTTS_" + System.currentTimeMillis();
                     
-                    // 修复：正确创建Bundle而不是HashMap
+                    // 创建参数Bundle
                     Bundle params = new Bundle();
                     params.putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId);
+                    params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f); // 最大音量
                     
+                    // 尝试播放
+                    Log.d(TAG, "Attempting to play text with length: " + content.length());
                     int result = directSystemTTS.speak(content, TextToSpeech.QUEUE_FLUSH, params, utteranceId);
+                    
                     if (result != TextToSpeech.SUCCESS) {
-                        showError("Failed to play content with TTS");
+                        Log.e(TAG, "Failed to play content with TTS, result code: " + result);
+                        
+                        // 检查常见错误
+                        String errorMsg;
+                        switch (result) {
+                            case TextToSpeech.ERROR:
+                                errorMsg = "TTS general error";
+                                break;
+                            case TextToSpeech.ERROR_SYNTHESIS:
+                                errorMsg = "TTS synthesis error";
+                                break;
+                            case TextToSpeech.ERROR_SERVICE:
+                                errorMsg = "TTS service error";
+                                break;
+                            case TextToSpeech.ERROR_OUTPUT:
+                                errorMsg = "TTS audio output error";
+                                break;
+                            case TextToSpeech.ERROR_NETWORK:
+                                errorMsg = "TTS network error";
+                                break;
+                            case TextToSpeech.ERROR_INVALID_REQUEST:
+                                errorMsg = "TTS invalid request";
+                                break;
+                            case TextToSpeech.ERROR_NOT_INSTALLED_YET:
+                                errorMsg = "TTS engine not fully installed";
+                                break;
+                            default:
+                                errorMsg = "Unknown TTS error: " + result;
+                        }
+                        showError("Failed to play content: " + errorMsg);
+                        
+                        // 显示TTS故障排除对话框
+                        showTTSErrorDialog();
                     }
                 } else {
-                    showError("Failed to initialize system TTS");
+                    Log.e(TAG, "Failed to initialize system TTS, status: " + status);
+                    showError("Failed to initialize system TTS. Please check your device settings.");
+                    
+                    // 作为最后手段，提示用户检查设备设置
+                    showTTSErrorDialog();
                 }
             });
         } catch (Exception e) {
-            Log.e(TAG, "Error in direct TTS: " + e.getMessage());
-            showError("Could not initialize TTS: " + e.getMessage());
+            Log.e(TAG, "Error in direct TTS initialization: " + e.getMessage(), e);
+            showError("TTS initialization error: " + e.getMessage());
+            
+            // 显示读取文本选项
+            showTTSErrorDialog();
         }
     }
 
