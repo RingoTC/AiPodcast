@@ -20,6 +20,8 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.example.aipodcast.model.NewsArticle;
 import com.example.aipodcast.model.PodcastContent;
 import com.example.aipodcast.model.PodcastSegment;
+import com.example.aipodcast.repository.NewsRepository;
+import com.example.aipodcast.repository.NewsRepositoryProvider;
 import com.example.aipodcast.service.EnhancedTTSService;
 import com.example.aipodcast.service.OpenAIService;
 import com.example.aipodcast.service.PodcastGenerator;
@@ -36,6 +38,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 public class PodcastPlayerActivity extends AppCompatActivity {
     private static final String TAG = "PodcastPlayerActivity";
@@ -103,23 +106,26 @@ public class PodcastPlayerActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_podcast_player);
+
+        // Get data from intent
         Intent intent = getIntent();
         selectedTopics = intent.getStringArrayListExtra("selected_topics");
         duration = intent.getIntExtra("duration", 5);
-        Log.d(TAG, "Received podcast duration: " + duration + " minutes");
-        Log.d(TAG, "Received podcast duration: " + duration + " minutes");
         useAIGeneration = intent.getBooleanExtra("use_ai_generation", false);
-        Log.d(TAG, "Using AI generation: " + useAIGeneration);
-        useStreamingMode = false; 
+        useStreamingMode = false;
+
         ArrayList<NewsArticle> articlesList = (ArrayList<NewsArticle>) intent.getSerializableExtra("selected_articles_list");
         if (articlesList != null) {
             selectedArticles = new HashSet<>(articlesList);
         }
+
         if (selectedArticles == null || selectedArticles.isEmpty()) {
             showError("No articles selected for podcast");
             finish();
             return;
         }
+
+        // Initialize TTS
         ttsHelper = new SimplifiedTTSHelper(this, new SimplifiedTTSHelper.InitCallback() {
             @Override
             public void onInitialized(boolean success) {
@@ -132,19 +138,23 @@ public class PodcastPlayerActivity extends AppCompatActivity {
                 }
             }
         });
-        podcastGenerator = new PodcastGenerator(selectedArticles, duration, selectedTopics);
-        podcastGenerator.setUseAI(useAIGeneration);
+
+        // Initialize views ONLY ONCE
         initializeViews();
         setupListeners();
         setupProgressTracking();
+
         if (useAIGeneration && aiAttributionPanel != null) {
             aiAttributionPanel.setVisibility(View.VISIBLE);
         } else if (aiAttributionPanel != null) {
             aiAttributionPanel.setVisibility(View.GONE);
         }
+
         animateUserInterface();
+
+        // Start generating podcast
         showGeneratingState(true);
-        generatePodcast();
+        loadFullArticleContent();
     }
     private void initializeViews() {
         podcastTitle = findViewById(R.id.podcast_title);
@@ -415,92 +425,45 @@ public class PodcastPlayerActivity extends AppCompatActivity {
         }
     }
     private void generatePodcast() {
-        if (useAIGeneration) {
-            generationStatus.setText("Generating AI conversation podcast...");
-        } else {
-            generationStatus.setText("Generating standard podcast content...");
+        // Already in generating state from loadFullArticleContent, just update text
+        if (generationStatus != null) {
+            generationStatus.setText("Generating podcast content...");
         }
-        generationProgress.setIndeterminate(true);
-        Button retryButton = findViewById(R.id.cancel_generation_button);
-        if (retryButton != null) {
-            retryButton.setText("Retry");
-            retryButton.setVisibility(View.VISIBLE);
-            retryButton.setOnClickListener(v -> {
-                if (!isPodcastGenerated) {
-                    generatePodcast();
-                }
-            });
+
+        if (generationProgress != null) {
+            generationProgress.setIndeterminate(true);
         }
-        Handler timeoutHandler = new Handler(Looper.getMainLooper());
-        timeoutHandler.postDelayed(() -> {
-            if (!isPodcastGenerated && !isCancelled) {
-                Log.w(TAG, "Podcast generation taking longer than expected");
-                runOnUiThread(() -> {
-                    generationStatus.setText("Taking longer than expected...");
-                    if (retryButton != null) {
-                        retryButton.setVisibility(View.VISIBLE);
-                    }
-                });
-            }
-        }, 30000); 
-        try {
-            podcastGenerator.generateContentAsync()
+
+        // Log content status if we have it
+        logArticleContentStatus();
+
+        // Make sure PodcastGenerator is initialized
+        if (podcastGenerator == null) {
+            podcastGenerator = new PodcastGenerator(selectedArticles, duration, selectedTopics);
+            podcastGenerator.setUseAI(useAIGeneration);
+        }
+
+        podcastGenerator.generateContentAsync()
                 .thenAccept(content -> {
                     podcastContent = content;
                     runOnUiThread(() -> {
-                        timeoutHandler.removeCallbacksAndMessages(null);
-                        if (retryButton != null) {
-                            retryButton.setVisibility(View.GONE);
-                        }
                         updatePodcastInfo();
                         isPodcastGenerated = true;
                         showGeneratingState(false);
                         updateTotalTimeText(podcastContent.getTotalDuration());
                         updateUIForPlayerState();
-                        generationStatus.setText("Ready to play");
+                        if (generationStatus != null) {
+                            generationStatus.setText("Ready to play");
+                        }
                     });
                 })
                 .exceptionally(e -> {
-                    timeoutHandler.removeCallbacksAndMessages(null);
                     runOnUiThread(() -> {
-                        String errorMessage = e.getMessage();
-                        if (errorMessage == null) errorMessage = "Unknown error";
-                        Log.e(TAG, "Error generating podcast: " + errorMessage);
-                        if (useAIGeneration) {
-                            useAIGeneration = false;
-                            useStreamingMode = false;
-                            podcastGenerator.setUseAI(false);
-                            generationStatus.setText("Switching to standard mode...");
-                            new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                                generatePodcast();
-                            }, 1000);
-                        } else {
-                            String userMessage;
-                            if (errorMessage.contains("API") || errorMessage.contains("connect")) {
-                                userMessage = "Connection to OpenAI failed. Please check your internet connection and try again.";
-                            } else if (errorMessage.contains("timeout")) {
-                                userMessage = "Request timed out. The service may be busy, please try again later.";
-                            } else if (errorMessage.contains("rate") || errorMessage.contains("limit")) {
-                                userMessage = "API rate limit exceeded. Please try again in a few minutes.";
-                            } else {
-                                userMessage = "Error generating podcast: " + errorMessage;
-                            }
-                            showError(userMessage);
-                            if (retryButton != null) {
-                                retryButton.setVisibility(View.VISIBLE);
-                            }
-                            showGeneratingState(false);
-                        }
+                        showError("Error generating podcast: " + e.getMessage());
+                        showGeneratingState(false);
                     });
                     return null;
                 });
-        } catch (Exception e) {
-            Log.e(TAG, "Exception starting podcast generation: " + e.getMessage(), e);
-            showError("Error starting podcast generation: " + e.getMessage());
-            if (retryButton != null) {
-                retryButton.setVisibility(View.VISIBLE);
-            }
-        }
     }
     private void synthesizeToFile() {
         directSpeechPlayback();
@@ -518,9 +481,18 @@ public class PodcastPlayerActivity extends AppCompatActivity {
     }
     private void updatePodcastInfo() {
         if (podcastContent == null) return;
+        // Make sure to display the forced duration
+        String durationText = String.format("Duration: %d:%02d",
+                podcastContent.getTotalDuration() / 60,
+                podcastContent.getTotalDuration() % 60);
+        podcastDuration.setText(durationText);
         podcastTitle.setText(podcastContent.getTitle());
-        podcastDuration.setText("Duration: " + podcastContent.getFormattedDuration());
+        //podcastDuration.setText("Duration: " + podcastContent.getFormattedDuration());
         topicsChipGroup.removeAllViews();
+        // Always update the seekbar max to match our forced duration
+        if (seekBar != null) {
+            seekBar.setMax(podcastContent.getTotalDuration());
+        }
         for (String topic : podcastContent.getTopics()) {
             Chip chip = new Chip(this);
             chip.setText(topic);
@@ -765,39 +737,83 @@ public class PodcastPlayerActivity extends AppCompatActivity {
     }
     private void showGeneratingState(boolean isGenerating) {
         if (isGenerating) {
-            generationStatus.setVisibility(View.VISIBLE);
-            generationProgress.setVisibility(View.VISIBLE);
+            if (generationStatus != null) {
+                generationStatus.setVisibility(View.VISIBLE);
+            }
+            if (generationProgress != null) {
+                generationProgress.setVisibility(View.VISIBLE);
+            }
             Button cancelButton = findViewById(R.id.cancel_generation_button);
             if (cancelButton != null) {
                 cancelButton.setVisibility(View.VISIBLE);
             }
-            seekBar.setVisibility(View.GONE);
-            currentTimeText.setVisibility(View.GONE);
-            totalTimeText.setVisibility(View.GONE);
-            prevButton.setVisibility(View.GONE);
-            playPauseButton.setVisibility(View.GONE);
-            nextButton.setVisibility(View.GONE);
-            speedValueText.setVisibility(View.GONE);
-            speedSlider.setVisibility(View.GONE);
+            if (seekBar != null) {
+                seekBar.setVisibility(View.GONE);
+            }
+            if (currentTimeText != null) {
+                currentTimeText.setVisibility(View.GONE);
+            }
+            if (totalTimeText != null) {
+                totalTimeText.setVisibility(View.GONE);
+            }
+            if (prevButton != null) {
+                prevButton.setVisibility(View.GONE);
+            }
+            if (playPauseButton != null) {
+                playPauseButton.setVisibility(View.GONE);
+            }
+            if (nextButton != null) {
+                nextButton.setVisibility(View.GONE);
+            }
+            if (speedValueText != null) {
+                speedValueText.setVisibility(View.GONE);
+            }
+            if (speedSlider != null) {
+                speedSlider.setVisibility(View.GONE);
+            }
             if (useStreamingMode) {
-                currentWordIndicator.setVisibility(View.VISIBLE);
-                hostContainer.setVisibility(View.VISIBLE);
+                if (currentWordIndicator != null) {
+                    currentWordIndicator.setVisibility(View.VISIBLE);
+                }
+                if (hostContainer != null) {
+                    hostContainer.setVisibility(View.VISIBLE);
+                }
             }
         } else {
-            generationStatus.setVisibility(View.GONE);
-            generationProgress.setVisibility(View.GONE);
+            if (generationStatus != null) {
+                generationStatus.setVisibility(View.GONE);
+            }
+            if (generationProgress != null) {
+                generationProgress.setVisibility(View.GONE);
+            }
             Button cancelButton = findViewById(R.id.cancel_generation_button);
             if (cancelButton != null) {
                 cancelButton.setVisibility(View.GONE);
             }
-            seekBar.setVisibility(View.VISIBLE);
-            currentTimeText.setVisibility(View.VISIBLE);
-            totalTimeText.setVisibility(View.VISIBLE);
-            prevButton.setVisibility(View.VISIBLE);
-            playPauseButton.setVisibility(View.VISIBLE);
-            nextButton.setVisibility(View.VISIBLE);
-            speedValueText.setVisibility(View.VISIBLE);
-            speedSlider.setVisibility(View.VISIBLE);
+            if (seekBar != null) {
+                seekBar.setVisibility(View.VISIBLE);
+            }
+            if (currentTimeText != null) {
+                currentTimeText.setVisibility(View.VISIBLE);
+            }
+            if (totalTimeText != null) {
+                totalTimeText.setVisibility(View.VISIBLE);
+            }
+            if (prevButton != null) {
+                prevButton.setVisibility(View.VISIBLE);
+            }
+            if (playPauseButton != null) {
+                playPauseButton.setVisibility(View.VISIBLE);
+            }
+            if (nextButton != null) {
+                nextButton.setVisibility(View.VISIBLE);
+            }
+            if (speedValueText != null) {
+                speedValueText.setVisibility(View.VISIBLE);
+            }
+            if (speedSlider != null) {
+                speedSlider.setVisibility(View.VISIBLE);
+            }
         }
     }
     private void highlightCurrentSegment() {
@@ -1139,6 +1155,121 @@ public class PodcastPlayerActivity extends AppCompatActivity {
             showGeneratingState(false);
         }
     }
+
+    private void loadFullArticleContent() {
+        if (selectedArticles == null || selectedArticles.isEmpty()) {
+            Log.e(TAG, "No articles selected");
+            generatePodcast(); // Fall back to generating with what we have
+            return;
+        }
+
+        // Make sure UI elements are initialized
+        if (generationStatus != null) {
+            generationStatus.setText("Loading full article content...");
+        }
+
+        if (generationProgress != null) {
+            generationProgress.setIndeterminate(true);
+        }
+
+        Log.d(TAG, "Starting to load full content for " + selectedArticles.size() + " articles");
+
+        Set<NewsArticle> articlesWithContent = new HashSet<>();
+        List<CompletableFuture<NewsArticle>> futures = new ArrayList<>();
+
+        // Create a repository for fetching article details
+        NewsRepository repository = NewsRepositoryProvider.getRepository(this);
+
+        // Proceed with article loading
+        for (NewsArticle article : selectedArticles) {
+            Log.d(TAG, "Requesting full content for: " + article.getTitle());
+
+            CompletableFuture<NewsArticle> future = repository.getArticleDetails(article.getUrl())
+                    .thenApply(fullArticle -> {
+                        String fullText = fullArticle.getFullBodyText();
+                        int wordCount = fullText != null ? fullText.split("\\s+").length : 0;
+
+                        Log.d(TAG, "SUCCESS: Got full article: " + fullArticle.getTitle() +
+                                " - Full text length: " + (fullText != null ? fullText.length() : 0) +
+                                " chars, Word count: " + wordCount);
+
+                        // Only use the article if it has substantial content
+                        if (fullText != null && fullText.length() > 300) {
+                            articlesWithContent.add(fullArticle);
+                            return fullArticle;
+                        } else {
+                            Log.w(TAG, "Article has insufficient content, using original");
+                            articlesWithContent.add(article);
+                            return article;
+                        }
+                    })
+                    .exceptionally(e -> {
+                        Log.e(TAG, "Error fetching full article: " + e.getMessage());
+                        articlesWithContent.add(article); // Add original article if fetching fails
+                        return article;
+                    });
+
+            futures.add(future);
+        }
+
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                .thenRun(() -> {
+                    selectedArticles = articlesWithContent;
+
+                    // Log detailed content status
+                    Log.d(TAG, "===== ARTICLE CONTENT STATUS =====");
+                    int totalLength = 0;
+                    final int[] articlesWithFullText = {0}; // Make it an array to be effectively final
+
+                    for (NewsArticle article : selectedArticles) {
+                        String fullText = article.getFullBodyText();
+                        int length = fullText != null ? fullText.length() : 0;
+                        totalLength += length;
+
+                        if (length > article.getAbstract().length() * 2) {
+                            articlesWithFullText[0]++;
+                        }
+
+                        Log.d(TAG, "Article: " + article.getTitle() +
+                                " - Abstract: " + article.getAbstract().length() + " chars" +
+                                " - Full text: " + length + " chars" +
+                                " - Has full content: " + (length > article.getAbstract().length() * 2 ? "YES" : "NO"));
+                    }
+
+                    final int finalTotalLength = totalLength; // Make it final
+
+                    Log.d(TAG, "Total full text length: " + finalTotalLength +
+                            " chars, Articles with full text: " + articlesWithFullText[0] +
+                            " of " + selectedArticles.size());
+                    Log.d(TAG, "====================================");
+
+                    runOnUiThread(() -> {
+                        // Create fresh instance with the updated articles containing full content
+                        podcastGenerator = new PodcastGenerator(selectedArticles, duration, selectedTopics);
+                        podcastGenerator.setUseAI(useAIGeneration);
+
+                        // Continue with podcast generation
+                        if (generationStatus != null) {
+                            generationStatus.setText("Generating podcast from " +
+                                    (articlesWithFullText[0] > 0 ? "full" : "limited") +
+                                    " article content...");
+                        }
+                        generatePodcast();
+                    });
+                })
+                .exceptionally(e -> {
+                    Log.e(TAG, "Error fetching articles: " + e.getMessage());
+                    runOnUiThread(() -> {
+                        if (generationStatus != null) {
+                            generationStatus.setText("Generating podcast with limited content...");
+                        }
+                        podcastGenerator = new PodcastGenerator(selectedArticles, duration, selectedTopics);
+                        podcastGenerator.setUseAI(useAIGeneration);
+                        generatePodcast(); // Proceed with what we have
+                    });
+                    return null;
+                });
+    }
     private void startGenerationProgressSimulation() {
         generationProgressPercent = 0;
         generationProgress.setProgress(0);
@@ -1165,6 +1296,43 @@ public class PodcastPlayerActivity extends AppCompatActivity {
             }
         };
         generationProgressHandler.post(progressUpdater);
+    }
+    private void logArticleContentStatus() {
+        if (selectedArticles == null || selectedArticles.isEmpty()) {
+            Log.w(TAG, "No articles to log content status");
+            return;
+        }
+
+        Log.d(TAG, "Article content status report:");
+        Log.d(TAG, "------------------------------");
+        int totalFullContentArticles = 0;
+
+        for (NewsArticle article : selectedArticles) {
+            String fullText = article.getFullBodyText();
+            int fullTextLength = (fullText != null) ? fullText.length() : 0;
+            int abstractLength = (article.getAbstract() != null) ? article.getAbstract().length() : 0;
+
+            boolean hasSubstantialFullText = fullTextLength > abstractLength * 2;
+
+            if (hasSubstantialFullText) {
+                totalFullContentArticles++;
+            }
+
+            Log.d(TAG, String.format(
+                    "Article: '%s', Abstract length: %d chars, Full content length: %d chars, Has substantial content: %s",
+                    article.getTitle(),
+                    abstractLength,
+                    fullTextLength,
+                    hasSubstantialFullText ? "YES" : "NO"
+            ));
+        }
+
+        Log.d(TAG, String.format(
+                "Summary: %d of %d articles have substantial content",
+                totalFullContentArticles,
+                selectedArticles.size()
+        ));
+        Log.d(TAG, "------------------------------");
     }
     private void updateGenerationStatusMessage(int progress) {
         String message;

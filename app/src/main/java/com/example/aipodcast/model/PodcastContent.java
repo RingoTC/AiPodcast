@@ -27,6 +27,12 @@ public class PodcastContent implements Serializable {
         this.title = title;
         this.topics = topics;
     }
+    public PodcastContent(String title, List<String> topics, int durationInSeconds) {
+        this();
+        this.title = title;
+        this.topics = topics;
+        this.totalDuration = durationInSeconds;
+    }
     public PodcastContent(String id, String title, List<String> topics, boolean isAIGenerated) {
         this();
         this.id = id;
@@ -36,8 +42,10 @@ public class PodcastContent implements Serializable {
     }
     public PodcastContent addSegment(PodcastSegment segment) {
         this.segments.add(segment);
-        this.totalDuration += segment.getEstimatedDuration();
         return this;
+    }
+    public void forceSetTotalDuration(int durationInSeconds) {
+        this.totalDuration = durationInSeconds;
     }
     public PodcastContent addAudioSegment(AudioSegment audioSegment) {
         this.audioSegments.add(audioSegment);

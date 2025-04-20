@@ -34,6 +34,27 @@ public class SimplifiedTTSHelper {
     private int currentChunkIndex = 0;
     private boolean isChunkedPlayback = false;
     private float currentSpeechRate = 1.0f;
+    // Optimal TTS chunk size (characters)
+    private static final int OPTIMAL_CHUNK_SIZE = 2000;
+
+    // Word count and speaking rate constants
+    private static final float DEFAULT_WORDS_PER_SECOND = 2.33f;
+    private String cleanTextForTTS(String text) {
+        if (text == null || text.isEmpty()) {
+            return text;
+        }
+
+        // Remove §HOST§ markers
+        String cleaned = text.replace("§HOST§", "");
+
+        // Remove any other markers like "HOST:" if present
+        cleaned = cleaned.replaceAll("\\bHOST:\\s*", "");
+
+        // Fix any double spaces created by removing markers
+        cleaned = cleaned.replaceAll("\\s+", " ");
+
+        return cleaned.trim();
+    }
     public interface ProgressCallback {
         void onProgress(int currentPosition, int totalDuration, int segmentIndex);
         void onComplete();
@@ -50,29 +71,158 @@ public class SimplifiedTTSHelper {
     }
     public SimplifiedTTSHelper(Context context, InitCallback initCallback) {
         this.context = context;
+
         tts = new TextToSpeech(context, status -> {
             if (status == TextToSpeech.SUCCESS) {
                 int result = tts.setLanguage(Locale.US);
                 isInitialized = result != TextToSpeech.LANG_MISSING_DATA &&
-                               result != TextToSpeech.LANG_NOT_SUPPORTED;
+                        result != TextToSpeech.LANG_NOT_SUPPORTED;
+
                 if (isInitialized) {
-                    currentSpeechRate = 0.9f;
+                    currentSpeechRate = 1.0f;
                     tts.setSpeechRate(currentSpeechRate);
                     tts.setPitch(1.0f);
+
+                    // Enable playback progress callbacks
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                        try {
+                            // Some devices may not support this feature
+                            tts.setOnUtteranceProgressListener(createUtteranceProgressListener());
+                        } catch (Exception e) {
+                            Log.e(TAG, "Error setting utterance progress listener: " + e.getMessage());
+                        }
+                    }
+
                     Log.d(TAG, "TTS initialized successfully");
                 } else {
                     Log.e(TAG, "Language not supported");
                 }
+
                 if (initCallback != null) {
                     handler.post(() -> initCallback.onInitialized(isInitialized));
                 }
             } else {
                 Log.e(TAG, "TTS initialization failed with status: " + status);
+
                 if (initCallback != null) {
                     handler.post(() -> initCallback.onInitialized(false));
                 }
             }
         });
+    }
+    private android.speech.tts.UtteranceProgressListener createUtteranceProgressListener() {
+        return new android.speech.tts.UtteranceProgressListener() {
+            private int wordIndex = 0;
+
+            @Override
+            public void onStart(String utteranceId) {
+                Log.d(TAG, "TTS started speaking utterance: " + utteranceId);
+                wordIndex = 0;
+            }
+
+            @Override
+            public void onDone(String utteranceId) {
+                Log.d(TAG, "TTS finished speaking utterance: " + utteranceId);
+
+                if (isChunkedPlayback && currentChunks != null &&
+                        currentChunkIndex < currentChunks.size() - 1) {
+                    // Move to next chunk
+                    currentChunkIndex++;
+                    playNextChunk();
+                } else if (progressCallback != null) {
+                    handler.post(() -> progressCallback.onComplete());
+                }
+            }
+
+            @Override
+            public void onError(String utteranceId) {
+                Log.e(TAG, "TTS Engine error for utteranceId: " + utteranceId);
+                String errorMsg = "TTS error occurred";
+
+                if (progressCallback != null) {
+                    handler.post(() -> progressCallback.onError(errorMsg));
+                }
+
+                // Try to continue with next chunk if in chunked mode
+                if (isChunkedPlayback && currentChunks != null &&
+                        currentChunkIndex < currentChunks.size() - 1) {
+                    currentChunkIndex++;
+                    playNextChunk();
+                }
+            }
+
+            @Override
+            public void onRangeStart(String utteranceId, int start, int end, int frame) {
+                if (wordTrackingCallback != null) {
+                    try {
+                        String text = isChunkedPlayback && currentChunks != null ?
+                                currentChunks.get(currentChunkIndex) : ttsText;
+
+                        if (text != null && start >= 0 && end > start && end <= text.length()) {
+                            String word = text.substring(start, end);
+                            wordIndex++;
+
+                            // Calculate global word index for chunked playback
+                            int globalWordIndex = wordIndex;
+                            if (isChunkedPlayback && currentChunkIndex > 0) {
+                                // Add approximate word count from previous chunks
+                                for (int i = 0; i < currentChunkIndex; i++) {
+                                    String chunk = currentChunks.get(i);
+                                    globalWordIndex += chunk.split("\\s+").length;
+                                }
+                            }
+
+                            final int finalGlobalWordIndex = globalWordIndex;
+                            handler.post(() -> wordTrackingCallback.onWordSpoken(word, finalGlobalWordIndex));
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error tracking word: " + e.getMessage());
+                    }
+                }
+            }
+        };
+    }
+    private void playNextChunk() {
+        if (!isChunkedPlayback || currentChunks == null ||
+                currentChunkIndex >= currentChunks.size()) {
+            return;
+        }
+
+        String chunk = currentChunks.get(currentChunkIndex);
+        String utteranceId = "CHUNK_" + currentChunkIndex;
+
+        Log.d(TAG, "Playing chunk " + (currentChunkIndex + 1) + " of " +
+                currentChunks.size() + " (length: " + chunk.length() + " chars)");
+
+        // Update offset for progress tracking
+        if (currentChunkIndex > 0) {
+            // Calculate approximate duration of all chunks played so far
+            int totalCharsPlayed = 0;
+            for (int i = 0; i < currentChunkIndex; i++) {
+                totalCharsPlayed += currentChunks.get(i).length();
+            }
+
+            float progress = (float) totalCharsPlayed /
+                    getTotalCharsInChunks(currentChunks);
+            ttsSimulationOffset = (int) (progress * ttsTotalDuration);
+        }
+
+        ttsStartTime = System.currentTimeMillis();
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            tts.speak(chunk, TextToSpeech.QUEUE_FLUSH, null, utteranceId);
+        } else {
+            HashMap<String, String> params = new HashMap<>();
+            params.put(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId);
+            tts.speak(chunk, TextToSpeech.QUEUE_FLUSH, params);
+        }
+    }
+    private int getTotalCharsInChunks(List<String> chunks) {
+        int total = 0;
+        for (String chunk : chunks) {
+            total += chunk.length();
+        }
+        return total;
     }
     public void setProgressCallback(ProgressCallback callback) {
         this.progressCallback = callback;
@@ -85,200 +235,152 @@ public class SimplifiedTTSHelper {
             Log.e(TAG, "TTS not initialized");
             return false;
         }
+
         if (text == null || text.isEmpty()) {
             Log.e(TAG, "Empty text provided");
             return false;
         }
+        String cleanedText = cleanTextForTTS(text);
+
         Log.d(TAG, "Speaking text of length: " + text.length() + " characters");
-        if (text.length() > 4000) {
-            Log.w(TAG, "Text exceeds recommended TTS size limit (4000 chars). Consider using chunked approach.");
-        }
         stop();
-        if (wordTrackingCallback != null) {
-            tts.setOnUtteranceProgressListener(new android.speech.tts.UtteranceProgressListener() {
-                private int wordIndex = 0;
-                @Override
-                public void onStart(String utteranceId) {
-                    Log.d(TAG, "TTS started speaking utterance: " + utteranceId);
-                    wordIndex = 0;
-                }
-                @Override
-                public void onDone(String utteranceId) {
-                    Log.d(TAG, "TTS finished speaking utterance: " + utteranceId);
-                    if (progressCallback != null) {
-                        handler.post(() -> progressCallback.onComplete());
-                    }
-                }
-                @Override
-                public void onError(String utteranceId) {
-                    Log.e(TAG, "TTS Engine error for utteranceId: " + utteranceId);
-                    String errorMsg = "TTS error";
-                    try {
-                        int errorCode = -1;
-                        if (utteranceId != null && utteranceId.contains("_error_")) {
-                            String[] parts = utteranceId.split("_error_");
-                            if (parts.length > 1) {
-                                errorCode = Integer.parseInt(parts[1]);
-                                errorMsg = "TTS error code: " + errorCode;
-                            }
-                        }
-                        if (errorCode == TextToSpeech.ERROR) {
-                            errorMsg = "General TTS error occurred";
-                        } else if (errorCode == TextToSpeech.ERROR_SYNTHESIS) {
-                            errorMsg = "TTS synthesis error - text may be too complex";
-                        } else if (errorCode == TextToSpeech.ERROR_SERVICE) {
-                            errorMsg = "TTS service error - TTS engine may not be available";
-                        } else if (errorCode == TextToSpeech.ERROR_OUTPUT) {
-                            errorMsg = "TTS output error - audio output issue";
-                        } else if (errorCode == TextToSpeech.ERROR_NETWORK) {
-                            errorMsg = "TTS network error - check internet connection";
-                        } else if (errorCode == TextToSpeech.ERROR_NETWORK_TIMEOUT) {
-                            errorMsg = "TTS network timeout - server took too long to respond";
-                        } else if (errorCode == TextToSpeech.ERROR_INVALID_REQUEST) {
-                            errorMsg = "TTS invalid request - malformed input text";
-                        } else if (errorCode == TextToSpeech.ERROR_NOT_INSTALLED_YET) {
-                            errorMsg = "TTS engine not fully installed";
-                        }
-                    } catch (Exception e) {
-                        Log.e(TAG, "Error parsing TTS error code: " + e.getMessage());
-                    }
-                    if (tts != null) {
-                        try {
-                            if (!tts.isSpeaking()) {
-                                errorMsg += " (Engine not speaking)";
-                            }
-                            try {
-                                Locale currentLocale = tts.getLanguage();
-                                if (currentLocale == null) {
-                                    errorMsg += " (No language set)";
-                                } else {
-                                    int langResult = tts.isLanguageAvailable(currentLocale);
-                                    if (langResult == TextToSpeech.LANG_MISSING_DATA) {
-                                        errorMsg += " (Language data missing)";
-                                    } else if (langResult == TextToSpeech.LANG_NOT_SUPPORTED) {
-                                        errorMsg += " (Language not supported)";
-                                    }
-                                }
-                            } catch (Exception langEx) {
-                                errorMsg += " (Error checking language: " + langEx.getMessage() + ")";
-                            }
-                        } catch (Exception e) {
-                            Log.e(TAG, "Error checking TTS status: " + e.getMessage());
-                        }
-                    } else {
-                        errorMsg += " (TTS engine is null)";
-                    }
-                    if (text.length() > 1000) {
-                        Log.e(TAG, "TTS error occurred with large text (" + text.length() + " chars)");
-                        errorMsg += " - Consider using chunked playback for large text";
-                    }
-                    final String finalErrorMsg = errorMsg;
-                    if (progressCallback != null) {
-                        handler.post(() -> progressCallback.onError(finalErrorMsg));
-                    }
-                }
-                @Override
-                public void onRangeStart(String utteranceId, int start, int end, int frame) {
-                    if (start >= 0 && end > start && end <= text.length()) {
-                        try {
-                            String word = text.substring(start, end);
-                            wordIndex++;
-                            if (wordTrackingCallback != null) {
-                                final int idx = wordIndex;
-                                handler.post(() -> wordTrackingCallback.onWordSpoken(word, idx));
-                            }
-                        } catch (Exception e) {
-                            Log.e(TAG, "Error tracking word: " + e.getMessage());
-                        }
-                    }
-                }
-            });
+
+        if (text.length() > OPTIMAL_CHUNK_SIZE) {
+            return speakLargeContent(text, OPTIMAL_CHUNK_SIZE);
         }
-        int result;
+
+        ttsText = cleanedText;
+        ttsTotalDuration = estimateTTSDuration(cleanedText);
+        ttsStartTime = System.currentTimeMillis();
+        ttsSimulationOffset = 0;
+
         String utteranceId = "SPEECH_" + System.currentTimeMillis();
+        int result;
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            result = tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId);
+            result = tts.speak(cleanedText, TextToSpeech.QUEUE_FLUSH, null, utteranceId);
         } else {
             HashMap<String, String> params = new HashMap<>();
             params.put(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId);
-            result = tts.speak(text, TextToSpeech.QUEUE_FLUSH, params);
+            result = tts.speak(cleanedText, TextToSpeech.QUEUE_FLUSH, params);
         }
+
         if (result != TextToSpeech.SUCCESS) {
             Log.e(TAG, "TTS speak() call failed with error code: " + result);
-            String errorMessage = "Failed to start TTS playback";
-            switch (result) {
-                case TextToSpeech.ERROR:
-                    errorMessage += " (General error)";
-                    break;
-                case TextToSpeech.ERROR_SYNTHESIS:
-                    errorMessage += " (Synthesis error - text may be too complex)";
-                    break;
-                case TextToSpeech.ERROR_SERVICE:
-                    errorMessage += " (Service error - TTS engine unavailable)";
-                    break;
-                case TextToSpeech.ERROR_OUTPUT:
-                    errorMessage += " (Output error - audio system issue)";
-                    break;
-                case TextToSpeech.ERROR_NETWORK:
-                    errorMessage += " (Network error)";
-                    break;
-                case TextToSpeech.ERROR_INVALID_REQUEST:
-                    errorMessage += " (Invalid request)";
-                    break;
-                case TextToSpeech.ERROR_NOT_INSTALLED_YET:
-                    errorMessage += " (TTS engine not fully installed)";
-                    break;
-            }
+
             if (progressCallback != null) {
-                final String finalErrorMessage = errorMessage;
-                handler.post(() -> progressCallback.onError(finalErrorMessage));
+                String errorMessage = "Failed to start TTS playback (error code: " + result + ")";
+                handler.post(() -> progressCallback.onError(errorMessage));
             }
+
             return false;
         }
+
         startTTSProgressUpdates(text);
         return true;
     }
     private void startTTSProgressUpdates(String text) {
-        final int totalDuration = estimateTTSDuration(text);
-        final long startTime = System.currentTimeMillis();
-        Log.d(TAG, "Starting TTS progress simulation, estimated duration: " + totalDuration + "ms");
-        ttsStartTime = startTime;
-        ttsSimulationOffset = 0;
-        ttsTotalDuration = totalDuration;
-        ttsText = text;
+        final int totalDuration = ttsTotalDuration > 0 ?
+                ttsTotalDuration : estimateTTSDuration(text);
+
+        Log.d(TAG, "Starting TTS progress tracking. Estimated duration: " +
+                totalDuration + "ms");
+
         Runnable progressUpdater = new Runnable() {
             @Override
             public void run() {
-                if (tts != null && tts.isSpeaking() && !isTtsSeeking) {
-                    long elapsedTime = System.currentTimeMillis() - ttsStartTime;
-                    if (currentSpeechRate != 1.0f) {
-                        elapsedTime = (long)(elapsedTime * currentSpeechRate);
-                    }
-                    int currentPosition = ttsSimulationOffset + (int)elapsedTime;
-                    currentPosition = Math.min(currentPosition, totalDuration);
-                    int segmentIndex = estimateCurrentSegment(currentPosition, totalDuration);
-                    if (progressCallback != null) {
-                        progressCallback.onProgress(currentPosition, totalDuration, segmentIndex);
-                    }
-                    handler.postDelayed(this, 50); 
-                } else if (!tts.isSpeaking() && !isTtsSeeking) {
+                if (tts != null && (tts.isSpeaking() || isChunkedPlayback) && !isTtsSeeking) {
+                    updateProgress();
+                    handler.postDelayed(this, 250); // Update 4 times per second
+                } else if (!tts.isSpeaking() && !isTtsSeeking && !isChunkedPlayback) {
                     if (progressCallback != null) {
                         handler.post(() -> progressCallback.onComplete());
                     }
                 }
             }
         };
+
         handler.post(progressUpdater);
     }
-    private int estimateTTSDuration(String text) {
+    private void updateProgress() {
+        try {
+            int currentPosition = 0;
+            int totalDuration = ttsTotalDuration;
+
+            // Calculate current position
+            if (isChunkedPlayback && currentChunks != null && currentChunks.size() > 0) {
+                // For chunked playback, scale based on chunk position
+                long elapsedTime = System.currentTimeMillis() - ttsStartTime;
+
+                // Calculate raw progress as percentage through all chunks
+                float chunkProgress = (float)currentChunkIndex / currentChunks.size();
+
+                // Add progress within current chunk
+                if (currentChunkIndex < currentChunks.size()) {
+                    String currentChunk = currentChunks.get(currentChunkIndex);
+                    int chunkDuration = estimateTTSDuration(currentChunk);
+
+                    // Account for speech rate
+                    long adjustedElapsedTime = (long)(elapsedTime * currentSpeechRate);
+                    float intraChunkProgress = Math.min(1.0f, adjustedElapsedTime / (float)chunkDuration);
+
+                    // Each chunk represents a portion of the total
+                    float chunkPortion = 1.0f / currentChunks.size();
+                    chunkProgress += intraChunkProgress * chunkPortion;
+                }
+
+                // Scale to our total duration
+                currentPosition = (int)(chunkProgress * totalDuration);
+            } else {
+                // For non-chunked playback
+                long elapsedTime = System.currentTimeMillis() - ttsStartTime;
+                long adjustedElapsedTime = (long)(elapsedTime * currentSpeechRate);
+
+                currentPosition = ttsSimulationOffset + (int)adjustedElapsedTime;
+                currentPosition = Math.min(currentPosition, totalDuration);
+            }
+
+            // Determine current segment
+            int segmentIndex = 0;
+            if (segments != null && !segments.isEmpty()) {
+                float progress = totalDuration > 0 ? (float)currentPosition / totalDuration : 0;
+                segmentIndex = Math.min((int)(progress * segments.size()), segments.size() - 1);
+            }
+
+            if (progressCallback != null) {
+                progressCallback.onProgress(currentPosition, totalDuration, segmentIndex);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error updating progress: " + e.getMessage());
+        }
+    }
+
+    public int estimateTTSDuration(String text) {
         if (text == null || text.isEmpty()) return 0;
+
         String[] words = text.split("\\s+");
         int wordCount = words.length;
-        float wordsPerSecond = 2.67f;
-        int sentenceCount = countSentences(text);
-        int pauseTimeMs = sentenceCount * 300; 
-        int calculatedDuration = Math.round((wordCount / wordsPerSecond) * 1000) + pauseTimeMs;
-        return Math.max(calculatedDuration, 1000); 
+
+        // Calculate sentence count for pauses
+        int sentenceCount = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '.' || c == '!' || c == '?') {
+                sentenceCount++;
+            }
+        }
+        sentenceCount = Math.max(sentenceCount, 1);
+
+        // Calculate speaking time based on word count
+        int speakingTimeMs = Math.round(wordCount / DEFAULT_WORDS_PER_SECOND * 1000);
+
+        // Add time for pauses between sentences (average 300ms per sentence)
+        int pauseTimeMs = sentenceCount * 300;
+
+        // Apply speech rate adjustment
+        int adjustedDuration = Math.round((speakingTimeMs + pauseTimeMs) / currentSpeechRate);
+
+        return adjustedDuration;
     }
     private int countSentences(String text) {
         if (text == null || text.isEmpty()) return 0;
@@ -296,88 +398,90 @@ public class SimplifiedTTSHelper {
             Log.e(TAG, "TTS not initialized or content is null");
             return false;
         }
+
         this.segments = content.getSegments();
         if (segments.isEmpty()) {
             Log.e(TAG, "No segments in podcast content");
             return false;
         }
+
         String fullText = content.getFullText();
         if (fullText == null || fullText.isEmpty()) {
             Log.e(TAG, "Empty full text in podcast content");
             return false;
         }
-        final int MAX_TTS_CHUNK_SIZE = 4000;
-        if (fullText.length() > MAX_TTS_CHUNK_SIZE) {
-            Log.d(TAG, "Podcast text is large (" + fullText.length() + " chars), using chunked playback");
-            return speakLargeContent(fullText, MAX_TTS_CHUNK_SIZE);
+        String cleanedFullText = cleanTextForTTS(fullText);
+
+        // Use the explicitly set duration from the PodcastContent
+        ttsTotalDuration = content.getTotalDuration() * 1000; // Convert to ms
+        Log.d(TAG, "Using forced podcast duration of " + ttsTotalDuration +
+                "ms for TTS playback timing");
+
+        // Preprocess to add speaker markers if needed
+        if (!fullText.contains("§HOST§") && !fullText.contains("HOST:")) {
+            fullText = addSpeakerMarkers(fullText);
         }
-        return speak(fullText);
+
+        return speakLargeContent(cleanedFullText, OPTIMAL_CHUNK_SIZE);
     }
+    private String addSpeakerMarkers(String text) {
+        if (text == null || text.isEmpty()) {
+            return text;
+        }
+
+        StringBuilder markedText = new StringBuilder();
+        String[] paragraphs = text.split("\n\n");
+
+        for (String paragraph : paragraphs) {
+            if (paragraph.trim().isEmpty()) {
+                continue;
+            }
+
+            // Add marker if not already present
+            if (!paragraph.trim().startsWith("§HOST§") &&
+                    !paragraph.trim().startsWith("HOST:")) {
+                markedText.append("§HOST§ ");
+            }
+
+            markedText.append(paragraph).append("\n\n");
+        }
+
+        return markedText.toString();
+    }
+
     private boolean speakLargeContent(String text, int maxChunkSize) {
         stop();
+
         if (text == null || text.isEmpty()) {
             Log.e(TAG, "Cannot speak empty text");
             return false;
         }
+        String cleanedText = cleanTextForTTS(text);
+
         try {
-            List<String> chunks = new ArrayList<>();
-            String[] paragraphs = text.split("\n\n");
-            if (paragraphs.length <= 1) {
-                paragraphs = new String[]{text};
-            }
-            StringBuilder currentChunk = new StringBuilder();
-            for (String paragraph : paragraphs) {
-                if (paragraph == null || paragraph.isEmpty()) {
-                    continue;
-                }
-                if (currentChunk.length() + paragraph.length() > maxChunkSize) {
-                    if (currentChunk.length() > 0) {
-                        chunks.add(currentChunk.toString());
-                        currentChunk = new StringBuilder();
-                    }
-                    if (paragraph.length() > maxChunkSize) {
-                        String[] sentences = paragraph.split("(?<=[.!?])\\s+");
-                        for (String sentence : sentences) {
-                            if (sentence == null || sentence.isEmpty()) {
-                                continue;
-                            }
-                            if (currentChunk.length() + sentence.length() > maxChunkSize) {
-                                if (currentChunk.length() > 0) {
-                                    chunks.add(currentChunk.toString());
-                                    currentChunk = new StringBuilder();
-                                }
-                                if (sentence.length() > maxChunkSize) {
-                                    int start = 0;
-                                    while (start < sentence.length()) {
-                                        int end = Math.min(start + maxChunkSize, sentence.length());
-                                        chunks.add(sentence.substring(start, end));
-                                        start = end;
-                                    }
-                                } else {
-                                    currentChunk.append(sentence).append(" ");
-                                }
-                            } else {
-                                currentChunk.append(sentence).append(" ");
-                            }
-                        }
-                    } else {
-                        currentChunk.append(paragraph).append("\n\n");
-                    }
-                } else {
-                    currentChunk.append(paragraph).append("\n\n");
-                }
-            }
-            if (currentChunk.length() > 0) {
-                chunks.add(currentChunk.toString());
-            }
-            Log.d(TAG, "Split podcast text into " + chunks.size() + " chunks for TTS");
+            List<String> chunks = splitTextIntoChunks(cleanedText, maxChunkSize);
+
             if (chunks.isEmpty()) {
                 Log.e(TAG, "Failed to split text into chunks");
                 return false;
             }
-            ttsText = text;
-            ttsTotalDuration = estimateTTSDuration(text);
-            playChunksSequentially(chunks, 0);
+
+            Log.d(TAG, "Split podcast text into " + chunks.size() + " chunks for TTS");
+
+            ttsText = cleanedText;
+            if (ttsTotalDuration == 0) {
+                ttsTotalDuration = estimateTTSDuration(cleanedText);
+            }
+
+            isChunkedPlayback = true;
+            currentChunks = chunks;
+            currentChunkIndex = 0;
+            ttsStartTime = System.currentTimeMillis();
+            ttsSimulationOffset = 0;
+
+            playNextChunk();
+            startTTSProgressUpdates(cleanedText);
+
             return true;
         } catch (Exception e) {
             Log.e(TAG, "Error in speakLargeContent: " + e.getMessage(), e);
@@ -499,8 +603,23 @@ public class SimplifiedTTSHelper {
         if (segments == null || segments.isEmpty() || totalDuration <= 0) {
             return 0;
         }
+
         float progress = (float) currentPosition / totalDuration;
-        return Math.min((int)(progress * segments.size()), segments.size() - 1);
+        int estimatedIndex = Math.min((int)(progress * segments.size()), segments.size() - 1);
+
+        // Find more precise segment based on accumulated durations
+        int accumulatedDuration = 0;
+        for (int i = 0; i < segments.size(); i++) {
+            int segmentDuration = segments.get(i).getEstimatedDuration() * 1000; // Convert to ms
+
+            if (currentPosition < accumulatedDuration + segmentDuration) {
+                return i;
+            }
+
+            accumulatedDuration += segmentDuration;
+        }
+
+        return estimatedIndex;
     }
     public void stop() {
         Log.d(TAG, "Stopping TTS playback, isChunkedPlayback=" + isChunkedPlayback);
@@ -698,55 +817,196 @@ public class SimplifiedTTSHelper {
     }
     private List<String> splitTextIntoChunks(String text, int maxChunkSize) {
         List<String> chunks = new ArrayList<>();
-        String[] paragraphs = text.split("\n\n");
-        if (paragraphs.length <= 1) {
-            paragraphs = new String[]{text};
-        }
+
+        // First clean the text
+        String cleanedText = cleanTextForTTS(text);
+
+        // Split on paragraphs first
+        String[] paragraphs = cleanedText.split("\n\n");
         StringBuilder currentChunk = new StringBuilder();
+
         for (String paragraph : paragraphs) {
-            if (paragraph == null || paragraph.isEmpty()) {
+            if (paragraph == null || paragraph.trim().isEmpty()) {
                 continue;
             }
+
+            // If adding this paragraph exceeds chunk size, finalize current chunk
             if (currentChunk.length() + paragraph.length() > maxChunkSize) {
+                // Add current chunk if not empty
                 if (currentChunk.length() > 0) {
                     chunks.add(currentChunk.toString());
                     currentChunk = new StringBuilder();
                 }
+
+                // If single paragraph is too large, split it further - but respect sentence boundaries
                 if (paragraph.length() > maxChunkSize) {
-                    String[] sentences = paragraph.split("(?<=[.!?])\\s+");
-                    for (String sentence : sentences) {
-                        if (sentence == null || sentence.isEmpty()) continue;
-                        if (currentChunk.length() + sentence.length() > maxChunkSize) {
-                            if (currentChunk.length() > 0) {
-                                chunks.add(currentChunk.toString());
-                                currentChunk = new StringBuilder();
-                            }
-                            if (sentence.length() > maxChunkSize) {
-                                int start = 0;
-                                while (start < sentence.length()) {
-                                    int end = Math.min(start + maxChunkSize, sentence.length());
-                                    chunks.add(sentence.substring(start, end));
-                                    start = end;
-                                }
-                            } else {
-                                currentChunk.append(sentence).append(" ");
-                            }
-                        } else {
-                            currentChunk.append(sentence).append(" ");
-                        }
-                    }
+                    splitByPreservingSentences(paragraph, maxChunkSize, chunks);
                 } else {
-                    currentChunk.append(paragraph).append("\n\n");
+                    currentChunk.append(paragraph);
                 }
             } else {
-                currentChunk.append(paragraph).append("\n\n");
+                // Paragraph fits in current chunk
+                if (currentChunk.length() > 0) {
+                    currentChunk.append("\n\n");
+                }
+                currentChunk.append(paragraph);
             }
         }
+
+        // Add final chunk if not empty
         if (currentChunk.length() > 0) {
             chunks.add(currentChunk.toString());
         }
-        Log.d(TAG, "Split text into " + chunks.size() + " chunks");
+
         return chunks;
+    }
+    // Helper method to split text while preserving complete sentences
+    private void splitByPreservingSentences(String text, int maxChunkSize, List<String> chunks) {
+        // Split on sentence boundaries
+        List<String> sentences = new ArrayList<>();
+        StringBuilder sentenceBuilder = new StringBuilder();
+
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            sentenceBuilder.append(c);
+
+            // Check for sentence end
+            if ((c == '.' || c == '!' || c == '?') &&
+                    (i == text.length() - 1 || Character.isWhitespace(text.charAt(i + 1)))) {
+                sentences.add(sentenceBuilder.toString());
+                sentenceBuilder = new StringBuilder();
+            }
+        }
+
+        // Add any remaining text as a sentence
+        if (sentenceBuilder.length() > 0) {
+            sentences.add(sentenceBuilder.toString());
+        }
+
+        // Group sentences into chunks
+        StringBuilder chunkBuilder = new StringBuilder();
+
+        for (String sentence : sentences) {
+            // If this sentence would make the chunk too big, finalize current chunk
+            if (chunkBuilder.length() + sentence.length() > maxChunkSize && chunkBuilder.length() > 0) {
+                chunks.add(chunkBuilder.toString());
+                chunkBuilder = new StringBuilder();
+            }
+
+            // If a single sentence is somehow bigger than max size, we have to split it
+            if (sentence.length() > maxChunkSize) {
+                if (chunkBuilder.length() > 0) {
+                    chunks.add(chunkBuilder.toString());
+                    chunkBuilder = new StringBuilder();
+                }
+
+                // Split on word boundaries if we must
+                String[] words = sentence.split("\\s+");
+                StringBuilder wordChunk = new StringBuilder();
+
+                for (String word : words) {
+                    if (wordChunk.length() + word.length() + 1 > maxChunkSize) {
+                        chunks.add(wordChunk.toString());
+                        wordChunk = new StringBuilder();
+                    }
+
+                    if (wordChunk.length() > 0) {
+                        wordChunk.append(" ");
+                    }
+                    wordChunk.append(word);
+                }
+
+                if (wordChunk.length() > 0) {
+                    chunks.add(wordChunk.toString());
+                }
+            } else {
+                // Add sentence to current chunk
+                if (chunkBuilder.length() > 0) {
+                    chunkBuilder.append(" ");
+                }
+                chunkBuilder.append(sentence);
+            }
+        }
+
+        // Add final chunk if not empty
+        if (chunkBuilder.length() > 0) {
+            chunks.add(chunkBuilder.toString());
+        }
+    }
+    private void splitLargeParagraph(String paragraph, int maxChunkSize, List<String> chunks) {
+        // Try to split on sentences
+        String[] sentences = paragraph.split("(?<=[.!?])\\s+");
+
+        StringBuilder currentChunk = new StringBuilder();
+        boolean isFirstSentence = true;
+
+        // Try to preserve speaker markers
+        String speakerMarker = "";
+        if (paragraph.startsWith("§HOST§")) {
+            speakerMarker = "§HOST§ ";
+        }
+
+        for (String sentence : sentences) {
+            if (sentence == null || sentence.trim().isEmpty()) {
+                continue;
+            }
+
+            // If adding this sentence exceeds chunk size, finalize current chunk
+            if (currentChunk.length() + sentence.length() > maxChunkSize) {
+                // Add current chunk if not empty
+                if (currentChunk.length() > 0) {
+                    chunks.add(currentChunk.toString());
+                    currentChunk = new StringBuilder();
+
+                    // Add speaker marker to next chunk
+                    if (!speakerMarker.isEmpty()) {
+                        currentChunk.append(speakerMarker);
+                    }
+
+                    isFirstSentence = true;
+                }
+
+                // If single sentence is too large, split it on words
+                if (sentence.length() > maxChunkSize) {
+                    // Just take chunks of appropriate size
+                    int start = 0;
+                    while (start < sentence.length()) {
+                        int end = Math.min(start + maxChunkSize, sentence.length());
+
+                        StringBuilder chunkWithMarker = new StringBuilder();
+                        if (!speakerMarker.isEmpty()) {
+                            chunkWithMarker.append(speakerMarker);
+                        }
+                        chunkWithMarker.append(sentence.substring(start, end));
+
+                        chunks.add(chunkWithMarker.toString());
+                        start = end;
+                    }
+                } else {
+                    // Add speaker marker if this is first sentence in chunk
+                    if (isFirstSentence && !speakerMarker.isEmpty() &&
+                            !currentChunk.toString().startsWith(speakerMarker)) {
+                        currentChunk.insert(0, speakerMarker);
+                    }
+                    currentChunk.append(sentence).append(" ");
+                    isFirstSentence = false;
+                }
+            } else {
+                // Sentence fits in current chunk
+                // Add speaker marker if this is first sentence in chunk
+                if (isFirstSentence && currentChunk.length() == 0 &&
+                        !speakerMarker.isEmpty()) {
+                    currentChunk.append(speakerMarker);
+                }
+                currentChunk.append(sentence).append(" ");
+                isFirstSentence = false;
+            }
+        }
+
+        // Add final chunk if not empty
+        if (currentChunk.length() > 0) {
+            chunks.add(currentChunk.toString());
+        }
     }
     private int findNearestSentenceBoundary(String text, int position) {
         if (text == null || text.isEmpty() || position >= text.length()) {
@@ -796,44 +1056,53 @@ public class SimplifiedTTSHelper {
             } catch (Exception e) {
                 Log.e(TAG, "Error getting position from MediaPlayer: " + e.getMessage());
             }
-        } else if (tts != null && tts.isSpeaking() && ttsTotalDuration > 0) {
+        } else if (tts != null && (tts.isSpeaking() || isChunkedPlayback) && ttsTotalDuration > 0) {
             long currentTime = System.currentTimeMillis();
             long elapsedTime = currentTime - ttsStartTime;
+
+            // Adjust for speech rate
+            elapsedTime = Math.round(elapsedTime * currentSpeechRate);
+
+            // Handle chunked playback
             if (isChunkedPlayback && currentChunks != null && currentChunks.size() > 0) {
-                int totalProcessedText = 0;
-                int totalTextLength = 0;
-                for (String chunk : currentChunks) {
-                    totalTextLength += chunk.length();
-                }
-                for (int i = 0; i < currentChunkIndex; i++) {
-                    totalProcessedText += currentChunks.get(i).length();
-                }
-                float progressPercent = totalTextLength > 0 ? 
-                    (float)totalProcessedText / totalTextLength : 0;
-                int basePosition = (int)(ttsTotalDuration * progressPercent);
-                String currentChunkText = currentChunkIndex < currentChunks.size() ? 
-                    currentChunks.get(currentChunkIndex) : "";
-                int currentChunkDuration = estimateTTSDuration(currentChunkText);
-                int currentChunkProgress = (int)Math.min(elapsedTime, currentChunkDuration);
-                int calculatedPosition = basePosition + currentChunkProgress;
-                if (calculatedPosition % 5000 < 100) { 
-                    Log.d(TAG, "Position (chunked): " + calculatedPosition + "ms, chunk " + 
-                          (currentChunkIndex + 1) + "/" + currentChunks.size());
-                }
+                int calculatedPosition = calculateChunkedPlaybackPosition(elapsedTime);
                 return Math.min(calculatedPosition, ttsTotalDuration);
             } else {
+                // Standard playback
                 int calculatedPosition = ttsSimulationOffset + (int)elapsedTime;
-                if (currentSpeechRate != 1.0f) {
-                    calculatedPosition = ttsSimulationOffset + (int)(elapsedTime * currentSpeechRate);
-                }
-                if (calculatedPosition % 5000 < 100) { 
-                    Log.d(TAG, "Position (standard): " + calculatedPosition + "ms of " + ttsTotalDuration + "ms");
-                }
                 return Math.min(calculatedPosition, ttsTotalDuration);
             }
         }
+
         return 0;
     }
+
+    private int calculateChunkedPlaybackPosition(long elapsedTime) {
+        // Calculate total characters
+        int totalChars = 0;
+        for (String chunk : currentChunks) {
+            totalChars += chunk.length();
+        }
+
+        // Calculate chars processed so far
+        int charsProcessed = 0;
+        for (int i = 0; i < currentChunkIndex; i++) {
+            charsProcessed += currentChunks.get(i).length();
+        }
+
+        // Add portion of current chunk
+        if (currentChunkIndex < currentChunks.size()) {
+            String currentChunk = currentChunks.get(currentChunkIndex);
+            int currentChunkDuration = estimateTTSDuration(currentChunk);
+            float chunkProgress = Math.min(1.0f, elapsedTime / (float)currentChunkDuration);
+            charsProcessed += Math.round(currentChunk.length() * chunkProgress);
+        }
+
+        // Calculate overall progress
+        float progress = totalChars > 0 ? (float)charsProcessed / totalChars : 0;
+        return Math.round(progress * ttsTotalDuration);
+    }
+
     public int getTotalDuration() {
         if (mediaPlayer != null) {
             try {
@@ -842,19 +1111,22 @@ public class SimplifiedTTSHelper {
                 Log.e(TAG, "Error getting duration from MediaPlayer: " + e.getMessage());
             }
         } else if (ttsTotalDuration > 0) {
+            // Always use our explicit setting if available
             return ttsTotalDuration;
+        } else if (segments != null && !segments.isEmpty()) {
+            // Only compute from segments if we don't have an explicit total
+            int totalDuration = 0;
+            for (PodcastSegment segment : segments) {
+                totalDuration += segment.getEstimatedDuration() * 1000; // Convert to ms
+            }
+            ttsTotalDuration = totalDuration;
+            return totalDuration;
         } else if (ttsText != null && !ttsText.isEmpty()) {
             ttsTotalDuration = estimateTTSDuration(ttsText);
             return ttsTotalDuration;
-        } else if (isChunkedPlayback && currentChunks != null && !currentChunks.isEmpty()) {
-            int totalDuration = 0;
-            for (String chunk : currentChunks) {
-                totalDuration += estimateTTSDuration(chunk);
-            }
-            ttsTotalDuration = totalDuration > 0 ? totalDuration : 60000;
-            return ttsTotalDuration;
         }
-        return 60000; 
+
+        return 60000; // Default fallback
     }
     public void shutdown() {
         stop();
