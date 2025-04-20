@@ -22,6 +22,12 @@ public class AuthService {
         DatabaseHelper dbHelper = DatabaseHelper.getInstance(context);
         this.userDao = new SqliteUserDao(dbHelper);
         this.preferences = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        
+        if (userDao.findByUsername("test123") == null) {
+            User defaultUser = new User("test123", "test123", "test123@example.com");
+            userDao.createUser(defaultUser);
+            Log.d(TAG, "Default user created successfully");
+        }
     }
     private void showToast(String message) {
         Toast.makeText(context, message, Toast.LENGTH_SHORT).show();
