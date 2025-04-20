@@ -41,11 +41,9 @@ public class RegisterActivity extends AppCompatActivity {
             showError("Passwords do not match");
             return;
         }
-        AuthService.AuthResult result = authService.register(username, password, email);
-        if (result.isSuccess()) {
+        boolean success = authService.register(username, password, email);
+        if (success) {
             startMainActivity();
-        } else {
-            showError(result.getMessage());
         }
     }
     private void showError(String message) {

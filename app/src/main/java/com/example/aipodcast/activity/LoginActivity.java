@@ -34,11 +34,10 @@ public class LoginActivity extends AppCompatActivity {
     private void handleLogin() {
         String username = usernameInput.getText() != null ? usernameInput.getText().toString() : "";
         String password = passwordInput.getText() != null ? passwordInput.getText().toString() : "";
-        AuthService.AuthResult result = authService.login(username, password);
-        if (result.isSuccess()) {
+        
+        boolean success = authService.login(username, password);
+        if (success) {
             startMainActivity();
-        } else {
-            showError(result.getMessage());
         }
     }
     private void showError(String message) {
