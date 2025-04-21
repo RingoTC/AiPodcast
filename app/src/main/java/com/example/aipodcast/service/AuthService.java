@@ -3,6 +3,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.util.Log;
 import android.util.Patterns;
+import android.widget.Toast;
 import com.example.aipodcast.database.DatabaseHelper;
 import com.example.aipodcast.database.dao.SqliteUserDao;
 import com.example.aipodcast.database.dao.UserDao;
@@ -14,11 +15,22 @@ public class AuthService {
     private static final String KEY_USERNAME = "username";
     private final UserDao userDao;
     private final SharedPreferences preferences;
+    private final Context context;
     private static AuthService instance;
     private AuthService(Context context) {
+        this.context = context.getApplicationContext();
         DatabaseHelper dbHelper = DatabaseHelper.getInstance(context);
         this.userDao = new SqliteUserDao(dbHelper);
         this.preferences = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        
+        if (userDao.findByUsername("test123") == null) {
+            User defaultUser = new User("test123", "test123", "test123@example.com");
+            userDao.createUser(defaultUser);
+            Log.d(TAG, "Default user created successfully");
+        }
+    }
+    private void showToast(String message) {
+        Toast.makeText(context, message, Toast.LENGTH_SHORT).show();
     }
     public static synchronized AuthService getInstance(Context context) {
         if (instance == null) {
@@ -26,50 +38,62 @@ public class AuthService {
         }
         return instance;
     }
-    public AuthResult register(String username, String password, String email) {
+    public boolean register(String username, String password, String email) {
         if (username == null || username.trim().isEmpty()) {
-            return new AuthResult(false, "Username is required");
+            showToast("Username is required");
+            return false;
         }
         if (password == null || password.length() < 6) {
-            return new AuthResult(false, "Password must be at least 6 characters");
+            showToast("Password must be at least 6 characters");
+            return false;
         }
         if (email == null || !Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
-            return new AuthResult(false, "Valid email is required");
+            showToast("Valid email is required");
+            return false;
         }
         if (userDao.findByUsername(username) != null) {
-            return new AuthResult(false, "Username already exists");
+            showToast("Username already exists");
+            return false;
         }
         if (userDao.findByEmail(email) != null) {
-            return new AuthResult(false, "Email already registered");
+            showToast("Email already registered");
+            return false;
         }
         User user = new User(username, password, email);
         long userId = userDao.createUser(user);
         if (userId != -1) {
             saveUserSession(userId, username);
-            return new AuthResult(true, "Registration successful");
+            showToast("Registration successful");
+            return true;
         } else {
-            return new AuthResult(false, "Registration failed");
+            showToast("Registration failed");
+            return false;
         }
     }
-    public AuthResult login(String username, String password) {
+    public boolean login(String username, String password) {
         if (username == null || username.trim().isEmpty()) {
-            return new AuthResult(false, "Username is required");
+            showToast("Username is required");
+            return false;
         }
         if (password == null || password.trim().isEmpty()) {
-            return new AuthResult(false, "Password is required");
+            showToast("Password is required");
+            return false;
         }
         User user = userDao.authenticate(username, password);
         if (user != null) {
             saveUserSession(user.getId(), user.getUsername());
-            return new AuthResult(true, "Login successful");
+            showToast("Login successful");
+            return true;
         } else {
-            return new AuthResult(false, "Invalid username or password");
+            showToast("Invalid username or password");
+            return false;
         }
     }
     public void logout() {
         SharedPreferences.Editor editor = preferences.edit();
         editor.clear();
         editor.apply();
+        showToast("Logged out successfully");
     }
     public boolean isLoggedIn() {
         return preferences.contains(KEY_USER_ID);
