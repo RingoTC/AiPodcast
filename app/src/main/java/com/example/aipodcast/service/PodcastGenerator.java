@@ -28,21 +28,35 @@ public class PodcastGenerator {
         this.topics = topics;
         this.useAI = !ApiConfig.OPENAI_API_KEY.equals("your_openai_api_key_here");
         if (this.useAI) {
-            this.openAIService = new OpenAIService(ApiConfig.OPENAI_API_KEY);
+            // Pass the useAI flag to OpenAIService constructor
+            this.openAIService = new OpenAIService(ApiConfig.OPENAI_API_KEY, this.useAI);
         }
     }
 
     public void setUseAI(boolean useAI) {
         this.useAI = useAI && !ApiConfig.OPENAI_API_KEY.equals("your_openai_api_key_here");
+
+        Log.d(TAG, "setUseAI called with " + useAI + ", final value: " + this.useAI);
+
+        // Update the OpenAIService if needed
+        if (this.openAIService != null) {
+            Log.d(TAG, "Updating useAIGeneration in OpenAIService to: " + this.useAI);
+            this.openAIService.useAIGeneration(true);  // Always set to true for conversational
+        } else if (this.useAI) {
+            Log.d(TAG, "Creating new OpenAIService with useAIGeneration: " + true);
+            this.openAIService = new OpenAIService(ApiConfig.OPENAI_API_KEY, true);
+        }
     }
 
     // In PodcastGenerator class
     public CompletableFuture<PodcastContent> generateContentAsync() {
         if (useAI && openAIService != null) {
             String title = createPodcastTitle();
+
+            Log.d(TAG, "useAI flag is set to: " + useAI);
             Log.d(TAG, "Generating AI podcast with target duration: " + targetDuration + " minutes");
 
-            return openAIService.generatePodcastContent(selectedArticles, topics, targetDuration, title)
+            return openAIService.generatePodcastContent(selectedArticles, topics, targetDuration, title, useAI)
                     .thenApply(content -> {
                         // Force the duration to match our target
                         int targetSeconds = targetDuration * 60;

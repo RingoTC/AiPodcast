@@ -30,13 +30,22 @@ public class OpenAIService {
     private final String apiKey;
     private final OkHttpClient client;
     private final Gson gson;
+    private boolean useAIGeneration;
+
     // Constants for word counts and timing
     private static final int WORDS_PER_MINUTE = 140;
     private static final int MIN_WORDS_PER_ARTICLE = 150;
     private static final int MAX_WORDS_PER_ARTICLE = 400;
 
     public OpenAIService(String apiKey) {
+        this(apiKey, true); // Default to conversational mode
+    }
+
+    public OpenAIService(String apiKey, boolean useAIGeneration) {
         this.apiKey = apiKey;
+        this.useAIGeneration = useAIGeneration;
+        Log.d(TAG, "Constructor called with useAIGeneration=" + useAIGeneration);
+
         HttpLoggingInterceptor logging = new HttpLoggingInterceptor();
         logging.setLevel(HttpLoggingInterceptor.Level.BASIC);
 
@@ -49,14 +58,23 @@ public class OpenAIService {
 
         this.gson = new GsonBuilder().create();
     }
+    public void useAIGeneration(boolean useAI) {
+        this.useAIGeneration = useAI;
+        Log.d(TAG, "useAIGeneration setter called with value=" + useAI);
+    }
     public CompletableFuture<PodcastContent> generatePodcastContent(
             Set<NewsArticle> articles,
             List<String> topics,
             int durationMinutes,
-            String podcastTitle) {
+            String podcastTitle,
+            boolean useConversation) {
         return CompletableFuture.supplyAsync(() -> {
             try {
+                Log.d(TAG, "generatePodcastContent called with useConversation=" + useConversation);
+
                 // Create a more detailed prompt focused on article content
+                this.useAIGeneration = useConversation;
+                Log.d(TAG, "Set useAIGeneration to " + this.useAIGeneration);
                 String prompt = buildConversationalPrompt(articles, topics, durationMinutes);
 
                 // Increase temperature for more creative/detailed responses
@@ -64,6 +82,8 @@ public class OpenAIService {
 
                 PodcastContent content = convertResponseToPodcastContent(
                         jsonResponse, topics, podcastTitle, durationMinutes);
+
+                Log.d(TAG, "Generated " + (useConversation ? "conversational" : "standard") + " podcast");
 
                 // Validate the content to ensure it's covering the articles properly
                 validateContentQuality(content, articles);
@@ -135,66 +155,86 @@ public class OpenAIService {
     private String buildConversationalPrompt(Set<NewsArticle> articles, List<String> topics, int durationMinutes) {
         StringBuilder prompt = new StringBuilder();
 
+        Log.d(TAG, "Building prompt with useAIGeneration=" + useAIGeneration);
+
         // Calculate word count target based on duration
         int targetWordCount = durationMinutes * WORDS_PER_MINUTE;
 
-        prompt.append("You are a professional podcast host creating a news podcast. ");
-        prompt.append("Your task is to create a detailed " + durationMinutes + " minute podcast script analyzing the news articles I'll provide.\n\n");
+        if (useAIGeneration) {
+            Log.d(TAG, "Using conversational AI generation format");
+            // Conversational format for AI generation
+            prompt.append("Generate a conversational podcast script between two hosts (ALEX and JORDAN) discussing recent news articles. ");
+            prompt.append("Your task is to create a natural dialogue that's EXACTLY ").append(durationMinutes);
+            prompt.append(" minutes long (approximately ").append(targetWordCount).append(" words).\n\n");
 
-        // Make it VERY explicit about using the full content
-        prompt.append("CRITICAL INSTRUCTIONS:\n");
-        prompt.append("1. I'm providing you with COMPLETE NEWS ARTICLES including FULL BODY TEXT.\n");
-        prompt.append("2. Your podcast MUST primarily use information from the FULL BODY TEXT section of each article - this contains the complete article content.\n");
-        prompt.append("3. DO NOT rely only on article titles or abstracts.\n");
-        prompt.append("4. DO NOT add any generic commentary, analyses, or content not found in the articles.\n");
-        prompt.append("5. The expected length is " + targetWordCount + " words total.\n\n");
+            // Format instructions
+            prompt.append("FORMAT INSTRUCTIONS:\n");
+            prompt.append("1. Use '§ALEX§' and '§JORDAN§' to indicate which host is speaking.\n");
+            prompt.append("2. Start each new speaking turn with the speaker marker (§ALEX§ or §JORDAN§).\n");
+            prompt.append("3. Make the conversation natural, with hosts asking questions, responding to each other, and sharing insights.\n");
+            prompt.append("4. Include a greeting at the beginning and a sign-off at the end.\n\n");
+        } else {
+            Log.d(TAG, "Using standard podcast format");
+            // Standard format for non-AI generation
+            prompt.append("You are a professional podcast host creating a news podcast. ");
+            prompt.append("Your task is to create a detailed ").append(durationMinutes).append(" minute podcast script analyzing the news articles I'll provide.\n\n");
+
+            // Format instructions
+            prompt.append("FORMAT INSTRUCTIONS:\n");
+            prompt.append("1. Use '§HOST§' to indicate the start of each paragraph.\n");
+            prompt.append("2. Create a script with a clear introduction, main content, and conclusion.\n\n");
+        }
+
+        // Content instructions
+        prompt.append("CONTENT INSTRUCTIONS:\n");
+        prompt.append("1. Base your discussion EXCLUSIVELY on the content from the provided articles.\n");
+        prompt.append("2. Organize the content to cover each article thoroughly before moving to the next.\n");
+        prompt.append("3. Focus on facts and information directly from the articles.\n");
+        prompt.append("4. Keep the tone professional but engaging.\n\n");
 
         if (topics != null && !topics.isEmpty()) {
             prompt.append("Focus on these topics: ").append(String.join(", ", topics)).append("\n\n");
         }
 
-        // Format instructions
-        prompt.append("Format your podcast script by starting each paragraph with '§HOST§'\n\n");
-
         // Articles to discuss
-        prompt.append("ARTICLES TO ANALYZE:\n\n");
-
-        // Debug info to check if articles have content
-        Log.d(TAG, "Building prompt with " + articles.size() + " articles");
+        prompt.append("NEWS ARTICLES TO DISCUSS:\n\n");
 
         List<NewsArticle> articlesList = new ArrayList<>(articles);
         for (int i = 0; i < articlesList.size(); i++) {
             NewsArticle article = articlesList.get(i);
-            String fullText = article.getFullBodyText();
 
-            // Log to check if we actually have content
-            Log.d(TAG, "Article " + i + ": " + article.getTitle() +
-                    " - Full text length: " + (fullText != null ? fullText.length() : 0) + " chars");
-
-            prompt.append("===================== ARTICLE " + (i+1) + " =====================\n");
-            prompt.append("TITLE: " + article.getTitle() + "\n");
+            prompt.append("ARTICLE ").append(i+1).append(":\n");
+            prompt.append("Title: ").append(article.getTitle()).append("\n");
 
             if (article.getSection() != null && !article.getSection().equals("Unknown")) {
-                prompt.append("SECTION: " + article.getSection() + "\n");
+                prompt.append("Section: ").append(article.getSection()).append("\n");
             }
 
-            // Include the abstract for context
-            prompt.append("BRIEF SUMMARY: " + article.getAbstract() + "\n\n");
+            prompt.append("Abstract: ").append(article.getAbstract()).append("\n");
 
-            // This is the critical part - ensure we're using the full text
-            prompt.append("FULL ARTICLE TEXT:\n" + (fullText != null && !fullText.isEmpty()
-                    ? fullText
-                    : "Full text not available. Use the brief summary above.") + "\n\n");
+            // Add the full article content when available
+            if (article.getFullBodyText() != null && !article.getFullBodyText().isEmpty()) {
+                prompt.append("Full Content: ").append(article.getFullBodyText()).append("\n");
+            }
 
-            prompt.append("=====================================================\n\n");
+            prompt.append("\n");
         }
 
-        // Final reminders
-        prompt.append("REMINDER: Your podcast script must:\n");
-        prompt.append("1. Start every paragraph with '§HOST§'\n");
-        prompt.append("2. Use the COMPLETE information from the full article texts\n");
-        prompt.append("3. Be informative and engaging\n");
-        prompt.append("4. Aim for approximately " + targetWordCount + " words total\n");
+        // Example format
+        if (useAIGeneration) {
+            // Example for conversational format
+            prompt.append("EXAMPLE CONVERSATION FORMAT:\n");
+            prompt.append("§ALEX§ Welcome to the News Roundup podcast! I'm Alex, joined by my co-host Jordan. Today we'll be discussing [topic].\n\n");
+            prompt.append("§JORDAN§ That's right, Alex. We have some interesting stories to cover today. Let's start with [first article topic].\n\n");
+            prompt.append("§ALEX§ So the headline says [article headline]. What caught your attention about this story?\n\n");
+        } else {
+            // Example for standard format
+            prompt.append("EXAMPLE FORMAT:\n");
+            prompt.append("§HOST§ Welcome to the News Roundup podcast! Today we'll be discussing [topic].\n\n");
+            prompt.append("§HOST§ Our first story covers [article headline].\n\n");
+        }
+
+        prompt.append("\nREMEMBER: Create a script that thoroughly discusses each article using the full content provided.");
 
         return prompt.toString();
     }
@@ -396,10 +436,14 @@ public class OpenAIService {
 
             PodcastContent podcastContent;
 
-            if (content.contains("§HOST§")) {
-                Log.d(TAG, "Detected §HOST§ markers in content - using direct format parsing");
+            if (useAIGeneration) {
+                // Handle conversational content (ALEX/JORDAN)
+                podcastContent = createConversationalPodcastContent(content, topics, podcastTitle);
+            } else if (content.contains("§HOST§")) {
+                // Handle standard HOST format
                 podcastContent = createPodcastContentFromMarkedText(content, topics, podcastTitle);
             } else {
+                // Fallback if no markers found
                 podcastContent = createFallbackPodcastContent(content, topics, podcastTitle);
             }
 
@@ -409,8 +453,8 @@ public class OpenAIService {
             Log.d(TAG, "Enforced podcast duration to exactly " + targetSeconds + " seconds");
 
             return podcastContent;
-
         } catch (Exception e) {
+            // Handle errors...
             Log.e(TAG, "Error parsing API response: " + e.getMessage());
             PodcastContent fallbackContent = createFallbackPodcastContent(jsonResponse, topics, podcastTitle);
 
@@ -449,6 +493,107 @@ public class OpenAIService {
         }
 
         return cleanedContent.toString();
+    }
+
+    // New method to handle conversational content
+    private PodcastContent createConversationalPodcastContent(String content, List<String> topics, String podcastTitle) {
+        PodcastContent podcastContent = new PodcastContent(podcastTitle, topics);
+
+        try {
+            // First let's identify ALEX and JORDAN parts
+            StringBuilder introText = new StringBuilder();
+            StringBuilder mainContentText = new StringBuilder();
+            StringBuilder conclusionText = new StringBuilder();
+
+            String[] parts = content.split("§(ALEX|JORDAN)§");
+
+            // Find all markers (ALEX or JORDAN)
+            List<String> markers = new ArrayList<>();
+            int startIndex = content.indexOf("§");
+            while (startIndex >= 0) {
+                int endIndex = content.indexOf("§", startIndex + 1);
+                if (endIndex > startIndex) {
+                    markers.add(content.substring(startIndex + 1, endIndex));
+                    startIndex = content.indexOf("§", endIndex + 1);
+                } else {
+                    break;
+                }
+            }
+
+            // Skip first part if it's empty
+            int contentStartIndex = (parts.length > 0 && parts[0].trim().isEmpty()) ? 1 : 0;
+
+            boolean isIntro = true;
+            boolean isConclusion = false;
+
+            // Process each part with its speaker
+            for (int i = contentStartIndex; i < parts.length; i++) {
+                if (i - contentStartIndex >= markers.size()) break;
+
+                String speaker = markers.get(i - contentStartIndex);
+                String text = parts[i].trim();
+
+                if (text.isEmpty()) continue;
+
+                // Format with speaker prefix
+                String formattedText = speaker + ": " + text;
+
+                // Check for conclusion indicators
+                if (text.toLowerCase().contains("thank you for listening") ||
+                        text.toLowerCase().contains("that's all for today") ||
+                        text.toLowerCase().contains("until next time") ||
+                        text.toLowerCase().contains("signing off")) {
+                    isConclusion = true;
+                }
+
+                // Add to appropriate section
+                if (isIntro && i - contentStartIndex <= 2) { // First exchanges are intro
+                    introText.append(formattedText).append("\n\n");
+                    if (i - contentStartIndex == 2) isIntro = false;
+                } else if (isConclusion) {
+                    conclusionText.append(formattedText).append("\n\n");
+                } else {
+                    mainContentText.append(formattedText).append("\n\n");
+                }
+            }
+
+            // Add segments
+            if (introText.length() > 0) {
+                podcastContent.addSegment(
+                        new PodcastSegment("Introduction", introText.toString(), PodcastSegment.SegmentType.INTRO)
+                );
+            }
+
+            if (mainContentText.length() > 0) {
+                podcastContent.addSegment(
+                        new PodcastSegment("Discussion", mainContentText.toString(), PodcastSegment.SegmentType.NEWS_ARTICLE)
+                );
+            }
+
+            if (conclusionText.length() > 0) {
+                podcastContent.addSegment(
+                        new PodcastSegment("Conclusion", conclusionText.toString(), PodcastSegment.SegmentType.CONCLUSION)
+                );
+            }
+
+            // If no segments were created, add all content as one segment
+            if (podcastContent.getSegments().isEmpty()) {
+                podcastContent.addSegment(
+                        new PodcastSegment("Podcast Content", content, PodcastSegment.SegmentType.NEWS_ARTICLE)
+                );
+            }
+
+            return podcastContent;
+        } catch (Exception e) {
+            Log.e(TAG, "Error creating conversational podcast content: " + e.getMessage());
+
+            // Fallback - just add the entire content as one segment
+            podcastContent.addSegment(
+                    new PodcastSegment("Podcast Content", content, PodcastSegment.SegmentType.NEWS_ARTICLE)
+            );
+
+            return podcastContent;
+        }
     }
 
     private void validatePodcastDuration(PodcastContent podcastContent, int targetDurationMinutes) {

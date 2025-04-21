@@ -26,7 +26,8 @@ public class MainActivity extends AppCompatActivity {
     private static final String TAG = "MainActivity";
     private AuthService authService;
     private static final float DISABLED_ALPHA = 1.0f;
-    private static final int COLOR_PURPLE = 0xFF6200EE; 
+    private static final int COLOR_PURPLE = 0xFF6200EE;
+    private static final int COLOR_TEAL = 0xFF3EB8B2;
     private static final int COLOR_DISABLED_BG = 0xFFE0E0E0; 
     private static final float ENABLED_ALPHA = 1.0f;
     private MaterialCardView logoCard;
@@ -116,7 +117,7 @@ public class MainActivity extends AppCompatActivity {
             generatePodcastButton.setBackgroundColor(COLOR_DISABLED_BG);
             generatePodcastButton.setTextColor(0xFF666666);
         } else {
-            generatePodcastButton.setBackgroundColor(COLOR_PURPLE);
+            generatePodcastButton.setBackgroundColor(0xFFFE704E);
             generatePodcastButton.setTextColor(getResources().getColor(android.R.color.white));
         }
         browseNewsButton.setEnabled(hasTopicsSelected);
@@ -127,8 +128,8 @@ public class MainActivity extends AppCompatActivity {
             browseNewsButton.setStrokeColor(ColorStateList.valueOf(COLOR_DISABLED_BG));
         } else {
             browseNewsButton.setBackgroundColor(getResources().getColor(android.R.color.white));
-            browseNewsButton.setTextColor(COLOR_PURPLE);
-            browseNewsButton.setStrokeColor(ColorStateList.valueOf(COLOR_PURPLE));
+            browseNewsButton.setTextColor(0xFFFE704E);
+            browseNewsButton.setStrokeColor(ColorStateList.valueOf(COLOR_TEAL));
         }
     }
     private void handleGenerate() {

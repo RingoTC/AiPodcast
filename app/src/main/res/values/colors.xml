@@ -7,8 +7,30 @@
     <color name="teal_200">#FF03DAC5</color>
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
-    <color name="white">#FFFFFFFF</color>
+
     <color name="chip_background">#F5F5F5</color>
+    <color name="primary">#9D6EB4</color>
+    <color name="primary_variant">#855D99</color>
+    <color name="primary_light">#BF93D2</color>
+
+    <color name="secondary">#3EB8B2</color>
+    <color name="secondary_variant">#339B96</color>
+    <color name="secondary_light">#7ED2CD</color>
+
+    <color name="accent">#FE704E</color>
+    <color name="accent_variant">#E56245</color>
+    <color name="accent_light">#FF9277</color>
+
+    <color name="yellow">#FFBE51</color>
+    <color name="yellow_variant">#E6A83A</color>
+    <color name="yellow_light">#FFCE7A</color>
+
+    <color name="dark">#13141F</color>
+    <color name="white">#FFFFFF</color>
+    <color name="light_gray">#F5F5F5</color>
+    <color name="medium_gray">#E0E0E0</color>
+    <color name="dark_gray">#757575</color>
+    <color name="error">#B00020</color>
 
     <!-- Custom colors for topic buttons -->
     <color name="color_technology">#FF4CAF50</color> <!-- Green -->

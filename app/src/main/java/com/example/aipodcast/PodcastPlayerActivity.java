@@ -107,6 +107,7 @@ public class PodcastPlayerActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_podcast_player);
 
+
         // Get data from intent
         Intent intent = getIntent();
         selectedTopics = intent.getStringArrayListExtra("selected_topics");
@@ -156,6 +157,7 @@ public class PodcastPlayerActivity extends AppCompatActivity {
         showGeneratingState(true);
         loadFullArticleContent();
     }
+
     private void initializeViews() {
         podcastTitle = findViewById(R.id.podcast_title);
         podcastDuration = findViewById(R.id.podcast_duration);
@@ -257,7 +259,7 @@ public class PodcastPlayerActivity extends AppCompatActivity {
                         currentSegmentIndex = segmentIndex;
                     }
                     if (!isSeekBarTracking) {
-                        seekBar.setProgress(currentPosition / 1000); 
+                        seekBar.setProgress(currentPosition / 1000);
                         updateCurrentTimeText(currentPosition / 1000);
                         updateTotalTimeText(totalDuration / 1000);
                     }
@@ -506,12 +508,12 @@ public class PodcastPlayerActivity extends AppCompatActivity {
             @Override
             public void run() {
                 if (isPodcastGenerated && ttsHelper != null) {
-                    boolean shouldUpdate = isPlaying || 
+                    boolean shouldUpdate = isPlaying ||
                         (ttsHelper != null && ttsHelper.isSpeaking());
                     if (shouldUpdate && !isSeekBarTracking) {
                         updateProgress();
                     }
-                    progressHandler.postDelayed(this, 100); 
+                    progressHandler.postDelayed(this, 1000);
                 }
             }
         });
@@ -522,7 +524,9 @@ public class PodcastPlayerActivity extends AppCompatActivity {
     private void updateProgress() {
         if (ttsHelper == null) return;
         try {
-            int currentPosition = ttsHelper.getCurrentPosition() / 1000; 
+            Log.d(TAG, "TTS position: " + ttsHelper.getCurrentPosition());
+
+            int currentPosition = ttsHelper.getCurrentPosition() / 1000;
             int totalDuration = ttsHelper.getTotalDuration() / 1000;
             if (totalDuration <= 0) {
                 if (podcastContent != null) {
@@ -537,7 +541,7 @@ public class PodcastPlayerActivity extends AppCompatActivity {
                 updateCurrentTimeText(currentPosition);
                 updateTotalTimeText(totalDuration);
                 if (currentPosition % 5 == 0) {
-                    Log.d(TAG, "Progress updated - position: " + currentPosition + 
+                    Log.d(TAG, "Progress updated - position: " + currentPosition +
                           "s, duration: " + totalDuration + "s");
                 }
             }
@@ -552,7 +556,7 @@ public class PodcastPlayerActivity extends AppCompatActivity {
         }
         try {
             ttsHelper.skipBackward(10000);
-            int currentPosition = ttsHelper.getCurrentPosition() / 1000; 
+            int currentPosition = ttsHelper.getCurrentPosition() / 1000;
             seekBar.setProgress(currentPosition);
             updateCurrentTimeText(currentPosition);
             updateProgress();
@@ -570,7 +574,7 @@ public class PodcastPlayerActivity extends AppCompatActivity {
         }
         try {
             ttsHelper.skipForward(10000);
-            int currentPosition = ttsHelper.getCurrentPosition() / 1000; 
+            int currentPosition = ttsHelper.getCurrentPosition() / 1000;
             seekBar.setProgress(currentPosition);
             updateCurrentTimeText(currentPosition);
             updateProgress();
@@ -712,12 +716,12 @@ public class PodcastPlayerActivity extends AppCompatActivity {
     private String formatTime(int seconds) {
         if (seconds < 0) seconds = 0;
         if (seconds >= 3600) {
-            return String.format("%d:%02d:%02d", 
+            return String.format("%d:%02d:%02d",
                     TimeUnit.SECONDS.toHours(seconds),
                     TimeUnit.SECONDS.toMinutes(seconds) % 60,
                     seconds % 60);
         } else {
-            return String.format("%d:%02d", 
+            return String.format("%d:%02d",
                     TimeUnit.SECONDS.toMinutes(seconds),
                     seconds % 60);
         }

@@ -21,6 +21,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.browser.customtabs.CustomTabsIntent;
+import androidx.cardview.widget.CardView;
 import androidx.recyclerview.widget.DividerItemDecoration;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
@@ -51,6 +52,7 @@ public class InputActivity extends AppCompatActivity {
     private RecyclerView newsRecyclerView;
     private TextView emptyStateView;
     private MaterialCardView searchCard;
+    private CardView emptyStateCard;
     private TextView timeLabel;
     private int selectedTime = 0;
     private SimplifiedTTSHelper ttsHelper;
@@ -100,9 +102,10 @@ public class InputActivity extends AppCompatActivity {
         logoSmall = findViewById(R.id.logo_small);
         searchTitle = findViewById(R.id.search_title);
         selectedTopicsChipGroup = findViewById(R.id.selected_topics_chip_group);
-        progressBar = findViewById(R.id.progress_bar);
+        progressBar = findViewById(R.id.loading_progress_bar);
         newsRecyclerView = findViewById(R.id.news_recycler_view);
         emptyStateView = findViewById(R.id.empty_state_view);
+        emptyStateCard = findViewById(R.id.empty_state_card);
         searchCard = findViewById(R.id.search_card);
         generatePodcastFab = findViewById(R.id.generate_podcast_fab);
         selectModeButton = findViewById(R.id.select_mode_button);
@@ -265,12 +268,16 @@ public class InputActivity extends AppCompatActivity {
         progressBar.setVisibility(isLoading ? View.VISIBLE : View.GONE);
         emptyStateView.setVisibility(isLoading ? View.GONE : View.VISIBLE);
         newsRecyclerView.setVisibility(isLoading ? View.GONE : View.VISIBLE);
+        emptyStateCard.setVisibility(View.VISIBLE);
+        newsRecyclerView.setVisibility(View.GONE);
     }
     private void showResults(List<NewsArticle> articles) {
         currentArticles.clear();
         currentArticles.addAll(articles);
         newsAdapter.notifyDataSetChanged();
         emptyStateView.setVisibility(View.GONE);
+        newsRecyclerView.setVisibility(View.VISIBLE);
+        emptyStateCard.setVisibility(View.GONE);
         newsRecyclerView.setVisibility(View.VISIBLE);
     }
     private void showEmptyState(String message) {
